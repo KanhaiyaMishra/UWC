@@ -9,7 +9,7 @@
 #include "prbs.h"
 #include "ofdm.h"
 #include "kiss_fft.h"
-#define DELAY 10
+#define DELAY 9
 #define N_FRAMES 10000
 #define MAX_COUNT (1<<14)
 
