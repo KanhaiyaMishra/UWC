@@ -13,7 +13,6 @@
 
 uint8_t pn_seq_buff[PN_SEQ_LEN];
 uint32_t n_sym, corr_max=0;
-real_t pulse[16] = 0.
 
 uint64_t GetTimeStamp(){
     struct timeval tv;
@@ -51,8 +50,8 @@ void ppm_mod(float *ppm_tx, uint8_t *bin_tx){
         for( j=0; j<N_BITS; j++)
     	    pos |= *(bin_tx+j)<<j;
 
-        for( j=-4; j<OSF+4; j++)
-            *(ppm_tx + pos*OSF + j) = pulse[j+4];
+        for( j=0; j<OSF; j++)
+            *(ppm_tx + pos*OSF + j) = PPM_AMP;
 
         ppm_tx += N_SAMP_SYM;
         bin_tx += N_BITS;
@@ -100,7 +99,7 @@ int main(int argc, char **argv){
     // Get cpu clock
     start = GetTimeStamp();
     // start continuous transmission with single burst waveforms
-	for(frm_num=0; frm_num<N_FRAMES; frm_num++){
+	for(frm_num=1; frm_num<N_FRAMES; frm_num++){
         // read the buffer pointer once for updating from zero
         rp_GenGetReadPointer(&pos, RP_CH_2);
         // Initialize the signal buffer

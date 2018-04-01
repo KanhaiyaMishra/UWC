@@ -9,7 +9,8 @@
 #include "prbs.h"
 #include <stdio.h>
 #include <time.h>
-
+#include <sys/time.h>
+#define AVG_DELAY 10
 #define N_FRAMES 1000
 
 // known sync sequence
@@ -18,6 +19,12 @@ uint8_t pn_seq_buff[PN_SEQ_LEN];
 uint32_t n_sym, corr_max;
 // indices holding ones in the pn sequence
 uint32_t indices[64];
+
+uint64_t GetTimeStamp(){
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    return tv.tv_sec*(uint64_t)1000000+tv.tv_usec;
+}
 
 // intilialize the modulator
 uint32_t ppm_init(){
@@ -122,11 +129,11 @@ uint32_t ppm_demod(uint8_t *bin_rx, float *ppm_rx, uint32_t samp_recvd, uint32_t
         sym_count += demod_sym;
         samp_recvd -= demod_sym*N_SAMP_SYM;
         fprintf(stdout,"RX: Demodulation Completed, Symbol Count = %d, Received %d bits, Remaining %d Samples\n", sym_count, *bits_received, samp_recvd);
-        if(samp_recvd > N_SAMP_SYM){
+/*        if(samp_recvd > N_SAMP_SYM){
             uint32_t new_bits=0;
             samp_recvd = ppm_demod(bin_rx, ppm_rx, samp_recvd, &new_bits);
             *bits_received += new_bits;
-        }
+        }*/
     }
     return samp_recvd;
 }
@@ -138,7 +145,7 @@ int main(int argc, char** argv){
 		fprintf(stderr,"RX: Initialization failed");
 
     // received samples, remaining samples, received bits, current and previous ADC ptr pos
-	uint32_t i, samp_recvd = 0, samp_remg =0, bits_recvd = 0, curr_pos, prev_pos=0;
+	uint32_t i, samp_recvd = 0, samp_remng =0, bits_recvd = 0, curr_pos, prev_pos=0, recvd_frms = 0;
     // Number of bits to be received per frame
 	uint32_t n_bits_total = ppm_init();
     // receive binary buffer (one extra buffer to take care of spillage while checking end of buffer)
@@ -149,14 +156,15 @@ int main(int argc, char** argv){
 	uint8_t *rx_bin_ptr = rx_bin_start;
     // receive signal buffer (one extra buffer for the case when current read samples spill out
     // of the first buffer. In next read cycle, pointer is reset to start of the first buffer)
-	float *rx_sig_start = (float *)malloc(2*ADC_BUFFER_SIZE*sizeof(float));
+	float *rx_sig_start = (float *)malloc((N_FRAMES+1)*(ADC_BUFFER_SIZE+AVG_DELAY)*sizeof(float));
     // end of first receive buffer
-	float *rx_sig_end = rx_sig_start + ADC_BUFFER_SIZE;
+	float *rx_sig_end = rx_sig_start + N_FRAMES*(ADC_BUFFER_SIZE+AVG_DELAY);
     // current location of pointer in signal buffer
 	float *rx_sig_ptr = rx_sig_start;
 
     // timing variables
-    clock_t start=0, end1=0, end2 = 0;;
+    uint64_t start=0, end=0;
+    clock_t start1=0, end1=0, end2 = 0;;
 	fprintf(stdout, "RX: Entered\n");
 
 /*	FILE *fp;
@@ -181,22 +189,27 @@ int main(int argc, char** argv){
     // small wait till ADC has acquired some data
     usleep(10000);
 
+    start = GetTimeStamp();
     // continue recieving untill receive signal buffer gets filled
 	while( TRUE ){
         // get the cpu clock at the start
-        start = clock();
+        start1 = clock();
+
         // get the current ADC write pointer
 		rp_AcqGetWritePointer(&curr_pos);
-        // calculate the samp_recvd of the data to be acquired
+
+        // calculate the #samples of the data to be acquired
 		samp_recvd = (curr_pos - prev_pos) % ADC_BUFFER_SIZE;
+
         // acquire the data into rx signal buffer from hardware ADC buffer
-	    rp_AcqGetDataV(RP_CH_1, prev_pos, &samp_recvd, rx_sig_ptr);
+	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, rx_sig_ptr);
+
 		fprintf(stdout,"RX: Read out samples = %d, Current pos = %d, Prev_pos = %d\n", samp_recvd, curr_pos, prev_pos);
         // calculate the acquisition time
-        end1 = clock() - start;
+        end1 = clock() - start1;
 
         // demodulate the receive signal and save the remaining unprocessed samples
-		samp_remg = ppm_demod(rx_bin_ptr, rx_sig_ptr-samp_remg, samp_recvd+samp_remg, &bits_recvd);
+		samp_remng = ppm_demod(rx_bin_ptr, rx_sig_ptr-samp_remng, samp_recvd+samp_remng, &bits_recvd);
         // update the ADC pointer position
 		prev_pos = curr_pos;
         // advance the signal buffer pointer
@@ -204,17 +217,16 @@ int main(int argc, char** argv){
         // advance the rx binary buffer
 		rx_bin_ptr += bits_recvd;
 
-        if (rx_sig_ptr > rx_sig_end){
-            for( i=0; i<samp_remg; i++)
-                rx_sig_start[i] = *(rx_sig_ptr-samp_remg+i);
-            rx_sig_ptr = rx_sig_start+i;
-        }
-        // check if bin buffer end is reached
+        // check for signal buffer overflow
+        if (rx_sig_ptr > rx_sig_end)
+            break;
+
+        // check for binary buffer oveflow
 		if ( rx_bin_ptr > rx_bin_end)
 			break;
 
         // calculate the data processing time
-        end2 = clock() - end1 - start;
+        end2 = clock() - end1 - start1;
         fprintf(stdout,"RX: Read time = %lf, Process time = %lf\n", (double)end1/CLOCKS_PER_SEC, (double)end2/CLOCKS_PER_SEC);
 	}
 
@@ -225,10 +237,15 @@ int main(int argc, char** argv){
     fclose(fp);
 */
     // save demodulated data
-    for(i = 0; i <N_FRAMES*n_bits_total; i++){
+    end = GetTimeStamp();
+    recvd_frms = ( (rx_bin_ptr - rx_bin_start)/sizeof(uint8_t) )/n_bits_total;
+    fprintf(stdout,"RX: Received %d Data Frames in %fms\n", recvd_frms, (double)(end-start)/1000);
+
+    for(i = 0; i <recvd_frms*n_bits_total; i++){
         fprintf(fp1," %d \n", *(rx_bin_start+i));
     }
     fclose(fp1);
+
 
     // Stop acquisition and release resources
     rp_AcqStop();
