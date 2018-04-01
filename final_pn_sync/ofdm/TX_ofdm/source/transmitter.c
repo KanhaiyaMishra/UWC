@@ -272,13 +272,11 @@ int main(int argc, char **argv){
 	fprintf(stdout,"TX: Transmitted %d Frames in %lf ms\n", N_FRAMES, (double)end/1000);
 	rp_GenOutDisable(RP_CH_2);
 
-/*    FILE *fp;
+    FILE *fp;
     fp = fopen("./data.txt","w+");
-    for(i=0; i<DELAY; i++)
-        fprintf(fp,"%f\n",0.0f);
     for(i=0; i<ADC_BUFFER_SIZE; i++)
         fprintf(fp,"%f\n",tx_sig_ptr[i]);
-*/
+
 
 //  Releasing resources
     free(tx_sig_ptr);
