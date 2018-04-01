@@ -13,6 +13,7 @@
 
 uint8_t pn_seq_buff[PN_SEQ_LEN];
 uint32_t n_sym, corr_max=0;
+real_t pulse[16] = 0.
 
 uint64_t GetTimeStamp(){
     struct timeval tv;
@@ -43,18 +44,6 @@ void ppm_mod(float *ppm_tx, uint8_t *bin_tx){
     // leave one symbol between sync sequence and data
     ppm_tx += OSF;
 
-/*    // insert the frame number information
-    for( i=0; i<(16/N_BITS); i++){
-        pos = 0;
-        for( j=0; j<N_BITS; j++)
-	    	pos |= ((frm_num>>(i*N_BITS+j))&1)<<j;
-
-        for( j=0; j<OSF; j++)
-            *(ppm_tx + pos*OSF + j) = PPM_AMP;
-
-        ppm_tx += N_SAMP_SYM;
-    }
-*/
     // write the ppm data into the buffer
   	for( i=0; i<n_sym; i++ )
 	{
@@ -62,8 +51,8 @@ void ppm_mod(float *ppm_tx, uint8_t *bin_tx){
         for( j=0; j<N_BITS; j++)
     	    pos |= *(bin_tx+j)<<j;
 
-        for( j=0; j<OSF; j++)
-            *(ppm_tx + pos*OSF + j) = PPM_AMP;
+        for( j=-4; j<OSF+4; j++)
+            *(ppm_tx + pos*OSF + j) = pulse[j+4];
 
         ppm_tx += N_SAMP_SYM;
         bin_tx += N_BITS;

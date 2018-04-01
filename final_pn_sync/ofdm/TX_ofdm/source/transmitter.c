@@ -9,8 +9,8 @@
 #include "prbs.h"
 #include "ofdm.h"
 #include "kiss_fft.h"
-#define DELAY 9
-#define N_FRAMES 10000
+
+#define N_FRAMES 100
 #define MAX_COUNT (1<<14)
 
 static real_t sync_sym[SYNC_SYM_LEN] = {0.0};
@@ -223,13 +223,17 @@ int main(int argc, char **argv){
 	uint32_t period = round(1e6/freq), frm_num, i, pos;
     real_t *tx_sig_ptr = (real_t *)malloc(2*ADC_BUFFER_SIZE*sizeof(real_t));
     uint8_t *tx_bin_ptr = (uint8_t *)malloc(N_SYM*N_QAM*N_BITS*sizeof(uint8_t));
-    //static volatile int32_t* dac_add = NULL;
+    static volatile int32_t* dac_add;
 
-	fprintf(stdout,"TX: Entered, total bits per frame=%d\n", N_BITS*N_QAM*N_SYM);
-    //  dac_add = (volatile int32_t*)rp_GenGetAdd(RP_CH_2);
+    // get the DAC hardware address
+    dac_add = (volatile int32_t*)rp_GenGetAdd(RP_CH_2);
+	fprintf(stdout,"TX: Entered, total bits =%d, DAC Address = %p\n", N_BITS*N_QAM*N_SYM, dac_add);
+    // reset the tx signal buffer
     memset(tx_sig_ptr, 0, ADC_BUFFER_SIZE*(sizeof(real_t)));
 	// DAC Output Settings
     rp_GenWaveform(RP_CH_2, RP_WAVEFORM_ARBITRARY);
+    // set the maximum amplitude of the signal
+    rp_GenAmp(RP_CH_2, 1);
 	// 1.9Msps frequency (16384 samples) per period
     rp_GenFreq(RP_CH_2, freq);
 	// Continuous waveform burst mode
@@ -246,17 +250,19 @@ int main(int argc, char **argv){
     start = GetTimeStamp();
 	for(frm_num=1; frm_num<=N_FRAMES; frm_num++){
         rp_GenGetReadPointer(&pos, RP_CH_2);
+
         for(i=0; i<FRM_NUM_BITS; i++)
             tx_bin_ptr[i] = ((frm_num>>i)&1);
 
 		pattern_LFSR_byte(PRBS7, tx_bin_ptr+FRM_NUM_BITS, N_SYM*N_QAM*N_BITS-FRM_NUM_BITS);
 
 		ofdm_mod(tx_sig_ptr, tx_bin_ptr);
+
         for(i=0; i<ADC_BUFFER_SIZE;){
             rp_GenGetReadPointer(&pos, RP_CH_2);
             pos = ((pos==0)?(ADC_BUFFER_SIZE):pos);
-            for(;i<pos;i++);
-//                dac_add[i] = ((int32_t)(tx_sig_ptr[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_ptr[i]>0)-1)) & (MAX_COUNT-1));
+            for(;i<pos;i++)
+                dac_add[i] = ((int32_t)(tx_sig_ptr[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_ptr[i]>0)-1)) & (MAX_COUNT-1));
         }
 		rp_GenOutEnable(RP_CH_2);
 		printf("TX: Transmitting Frame Num = %d\n",frm_num);
@@ -266,13 +272,13 @@ int main(int argc, char **argv){
 	fprintf(stdout,"TX: Transmitted %d Frames in %lf ms\n", N_FRAMES, (double)end/1000);
 	rp_GenOutDisable(RP_CH_2);
 
-    FILE *fp;
+/*    FILE *fp;
     fp = fopen("./data.txt","w+");
     for(i=0; i<DELAY; i++)
         fprintf(fp,"%f\n",0.0f);
     for(i=0; i<ADC_BUFFER_SIZE; i++)
         fprintf(fp,"%f\n",tx_sig_ptr[i]);
-
+*/
 
 //  Releasing resources
     free(tx_sig_ptr);

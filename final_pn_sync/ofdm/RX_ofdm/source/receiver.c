@@ -13,10 +13,12 @@
 #include "redpitaya/rp.h"
 
 #define N_FRAMES 1
+#define BUFF_LEN 2
 
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
 static complex_t fft_out_buff[N_FFT] = {{0.0}};
+static real_t rx_sig_buff[BUFF_LEN*ADC_BUFFER_SIZE] = {0.0};
 static uint8_t gray_map[16] __attribute__((aligned(1))) = { 0, 1, 3, 2, 6, 7, 5, 4, 12, 13, 15, 14, 10, 11,  9,  8 };
 
 static inline real_t comp_mag_sqr( complex_t num ){
@@ -28,13 +30,6 @@ static inline complex_t comp_div( complex_t num, complex_t den){
     div.r = (num.r*den.r + num.i*den.i)/comp_mag_sqr(den);
     div.i = (num.i*den.r - num.r*den.i)/comp_mag_sqr(den);
     return div;
-}
-
-static real_t dot_product(real_t* arr1, real_t* arr2, uint32_t size, uint32_t offset){
-    real_t result=0.0;
-    for(int i=0; i<size; i++)
-        result += arr1[i*offset]*arr2[i*offset];
-    return result;
 }
 
 void qam_mod ( complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_sym)
@@ -129,7 +124,7 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
     }
 }
 
-uint32_t ofdm_demod(uint8_t *bin_rx, real_t *sig_rx, uint32_t samp_remng, uint32_t *bits_recvd){
+uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uint32_t *bits_recvd, uint32_t wrap_around){
 
 	complex_t *fft_out = fft_out_buff, *fft_in = fft_in_buff;
     complex_t ht[N_FFT] = {{0.0}}, hf[N_FFT] = {{0.0}};
@@ -137,72 +132,75 @@ uint32_t ofdm_demod(uint8_t *bin_rx, real_t *sig_rx, uint32_t samp_remng, uint32
 	kiss_fft_cfg ifft_cfg = kiss_fft_alloc(N_FFT, TRUE, NULL, NULL);
     const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
     const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC;
-    static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0;
-    static real_t auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0, corr_th = 0.40, max_of_min = 0.0;
+    static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, prev_corr_count = 0;
+    static real_t auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0, corr_th = 1.0, max_of_min = 0.0, auto_corr_s, cros_corr_s;
     static dequeue window;
-    uint32_t idx=0, sync_point, demod_sym, sync_correction = N_FFT/4;
-    real_t *sig_ptr1, *sig_ptr2, *sig_ptr3;
+    uint32_t idx1=0, idx2=0, idx3=0, sync_point, demod_sym, sync_correction = N_FFT/4;
     complex_t *ch_ptr;
-    sig_ptr1 = sig_rx;
-    sig_ptr2 = sig_rx+OSF*N_FFT/2;
-    sig_ptr3 = sig_rx+OSF*N_FFT;
+
+    idx1 = demod_idx;
+    idx2 = (demod_idx+N_FFT*OSF/2) % wrap_around;
+    idx3 = (demod_idx+N_FFT*OSF) % wrap_around;
+
+    fprintf(stdout,"Sync Started, Receive Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
 
     if(!sync_done){
-        if(corr_count<0){
-            fprintf(stdout," Sync Started, Rx Address = %p, Remaininig Samples = %d\n",sig_rx, samp_remng);
+        if(prev_corr_count<0){
             sym_count = 0;
             initialize(&window);
             if(samp_remng >= OSF*N_FFT){
-                auto_corr = dot_product( sig_ptr2, sig_ptr2, corr_len, PRE_DSF);
-                cros_corr = dot_product( sig_ptr1, sig_ptr2, corr_len, PRE_DSF);
+                for (int i=0; i<corr_len; i++){
+                    auto_corr += rx_sig_buff[(idx2+i*PRE_DSF) % wrap_around]*rx_sig_buff[(idx2+i*PRE_DSF) % wrap_around];
+                    cros_corr += rx_sig_buff[(idx1+i*PRE_DSF) % wrap_around]*rx_sig_buff[(idx2+i*PRE_DSF) % wrap_around];
+                }
                 corr_fact = fabs(cros_corr/auto_corr);
-                corr_count++;
+                prev_corr_count++;
             } else
-                fprintf(stdout,"Sync not completed samples not enough, remaining samples = %d\n", samp_remng);
+                fprintf(stdout,"Sync not completed samples not enough, demod_idx = %d, remaining samples = %d\n", samp_remng, idx1);
         }
-        if(corr_count>=0){
-            for( ;samp_remng >= PRE_DSF; samp_remng-=PRE_DSF) {
+        if(prev_corr_count>=0){
+            for( ;samp_remng > OSF*N_FFT; samp_remng-=PRE_DSF) {
 
                 while( !empty(&window) && window.data[window.rear].value >= corr_fact)
                     dequeueR(&window);
-                enqueueR( &window, (pair){.value = corr_fact, .position = corr_count} );
-                while(window.data[window.front].position < (corr_count-win_len) )
+                enqueueR( &window, (pair){.value = corr_fact, .position = idx1} );
+                while(window.data[window.front].position < (idx1 - PRE_DSF*win_len )%wrap_around )
                     dequeueF(&window);
 
-                if( window.data[window.front].value > max_of_min  && corr_count >= win_len ){
+                if( window.data[window.front].value > max_of_min  && prev_corr_count >= win_len ){
                     max_of_min = window.data[window.front].value;
-                    sync_point = corr_count - win_len;
-//                    fprintf(stdout,"max of window minimum = %f, location = %d\n", max_of_min, sync_point);
-                } else if ( window.data[window.front].value < 0.5*max_of_min && max_of_min > corr_th){
+                    sync_idx = idx1;
+                    auto_corr_s = auto_corr;
+                    cros_corr_s = cros_corr;
+                } else if ( window.data[window.front].value < 0.5*max_of_min && cros_corr_s > corr_th){
                     sync_done = 1;
                     break;
                 }
-                auto_corr = auto_corr + sig_ptr3[idx]*sig_ptr3[idx] - sig_ptr2[idx]*sig_ptr2[idx];
-                cros_corr = cros_corr + sig_ptr2[idx]*sig_ptr3[idx] - sig_ptr1[idx]*sig_ptr2[idx];
+                auto_corr = auto_corr + rx_sig_buff[idx3]*rx_sig_buff[idx3] - rx_sig_buff[idx2]*rx_sig_buff[idx2];
+                cros_corr = cros_corr + rx_sig_buff[idx2]*rx_sig_buff[idx3] - rx_sig_buff[idx1]*rx_sig_buff[idx2];
                 corr_fact = fabs(cros_corr/auto_corr);
                 corr_count++;
-                idx = corr_count*PRE_DSF;
+                idx1 = (idx1 + PRE_DSF)%wrap_around;
+                idx2 = (idx2 + PRE_DSF)%wrap_around;
+                idx3 = (idx3 + PRE_DSF)%wrap_around;
             }
             if(sync_done){
-                samp_remng = samp_remng + corr_count*PRE_DSF - sync_point*PRE_DSF;
-                sig_rx += sync_point*PRE_DSF;
-                fprintf(stdout,"Sync completed, sync_point = %d, max of min = %f, corr_count = %d, remaining samples = %d\n", sync_point, max_of_min, corr_count, samp_remng);
+                samp_remng = samp_remng + (corr_count-prev_corr_count)*PRE_DSF - sync_point*PRE_DSF;
+                fprintf(stdout,"Sync completed, sync_point = %d, corr_count = %d, remaining samples = %d, demod_idx = %d\n", sync_point, corr_count, samp_remng, demod_idx%wrap_around);
+                fprintf(stdout,"Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
             } else
-                fprintf(stdout,"Sync not completed, remaining samples = %d\n", samp_remng);
+                fprintf(stdout,"Sync not completed, remaining samples = %d, stop_demod = %d, corr_count=%d, wrap_around=%d\n", samp_remng, idx1%wrap_around, corr_count, wrap_around);
+                fprintf(stdout,"Sync not completed, start_demod = %d, idx1=%d, idx2 = %d, idx3=%d, recv_samples=%d\n", demod_idx, idx1, idx2, idx3, samp_remng+(prev_corr_count-corr_count)*PRE_DSF);
+                prev= corr_count;
         }
     }
     if(sync_done){
         if (!sync_corrected){
             if ( samp_remng >= (N_FFT+n_cp_rem)*OSF ){
                 // correct for sync error
-                sig_rx += n_cp_rem*OSF;
-    		    for( int i=0; i< N_FFT; i++){
-	    	    #ifdef FLIP
-		    	    fft_in[i].r = *(sig_rx + i*OSF + OSF/2);
-    	        #elif defined(DCO)
-		    	    fft_in[i].r = *(sig_rx + i*OSF + OSF/2);
-		        #endif
-		        }
+                demod_idx = sync_idx + n_cp_rem*OSF;
+    		    for( int i=0; i< N_FFT; i++)
+		    	    fft_in[i].r = rx_sig_buff[(demod_idx + i*OSF + OSF/2)%wrap_around];
 
     		    kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
 
@@ -222,12 +220,12 @@ uint32_t ofdm_demod(uint8_t *bin_rx, real_t *sig_rx, uint32_t samp_remng, uint32
                         sync_correction = N_FFT/4-i;
                     }
                 }
-                sig_rx = sig_rx + (N_FFT + max_sync_error - sync_correction)*OSF;
+                demod_idx = demod_idx + (N_FFT + max_sync_error - sync_correction)*OSF;
                 samp_remng -= SYNC_SYM_LEN - sync_correction*OSF;
                 sync_corrected = 1;
-                fprintf(stdout,"Sync correction done by %d samples, max_coef = %f, rx address = %p\n", sync_correction*OSF, max_coef, sig_rx);
+                fprintf(stdout,"Sync correction done by %d samples, max_coef = %f, demod_index = %d\n", sync_correction*OSF, max_coef, demod_idx%wrap_around);
             } else
-                fprintf(stdout,"Demoduation not completed, sync symbol not received\n");
+                fprintf(stdout,"Demoduation not completed, sync correction not completed\n");
         }
         if (sync_corrected){
             if ( samp_remng >= (N_SYM-sym_count)*DATA_SYM_LEN ){
@@ -238,15 +236,15 @@ uint32_t ofdm_demod(uint8_t *bin_rx, real_t *sig_rx, uint32_t samp_remng, uint32
             } else
                 demod_sym = samp_remng/DATA_SYM_LEN;
 
-            sig_rx += N_CP_DATA*OSF;
+            demod_idx = (demod_idx + N_CP_DATA*OSF)%wrap_around;
 
             // downsample the received data
 	        for(int j=0; j<demod_sym; j++){
 		        for( int i=0; i< N_FFT; i++){
 	    	    #ifdef FLIP
-		    	    fft_in[i].r = *(sig_rx + i*OSF + OSF/2) - *(sig_rx + DATA_SYM_LEN + i*OSF + OSF/2);
+		    	    fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF + OSF/2) % wrap_around] - rx_sig_buff[ (demod_idx + DATA_SYM_LEN + i*OSF + OSF/2) % wrap_around];
 	    	    #elif defined(DCO)
-		    	    fft_in[i].r = *(sig_rx + i*OSF + OSF/2);
+		    	    fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF + OSF/2) % wrap_around];
 		        #endif
 		        }
 
@@ -254,20 +252,20 @@ uint32_t ofdm_demod(uint8_t *bin_rx, real_t *sig_rx, uint32_t samp_remng, uint32
 	        	qam_demod( bin_rx, (fft_out+1));
 
     	    	// get rx buffer pointer without cp for next symbol
-	        	sig_rx += DATA_SYM_LEN;
+	        	demod_idx += DATA_SYM_LEN;
 		        // get bin buffer pointer for next symbol
 		        bin_rx += N_QAM*N_BITS;
 
     	    	// FLIP decodes two ofdm symbols together, so advance pointer once more
         	    #if defined(FLIP)
-		        ofdm_rx += DATA_SYM_LEN;
+		        demod_idx += DATA_SYM_LEN;
 	    	    j++;
 	            #endif
 	        }
             sym_count += demod_sym;
             samp_remng = samp_remng%DATA_SYM_LEN;
             *bits_recvd = demod_sym*N_QAM*N_BITS;
-            fprintf(stdout,"Demoduation completed, sym_count = %d, remaining samples = %d, received bits = %d\n", sym_count, samp_remng, *bits_recvd);
+            fprintf(stdout,"Demoduation completed, sym_count = %d, remaining samples = %d, demod_idx = %d, received bits = %d\n", sym_count, demod_idx%wrap_around, samp_remng, *bits_recvd);
 	        kiss_fft_free(fft_cfg);
 	        kiss_fft_free(ifft_cfg);
         }
@@ -291,11 +289,7 @@ int main(int argc, char** argv){
 	uint8_t *rx_bin_ptr = rx_bin_start;
     // receive signal buffer (one extra buffer for the case when current read samples spill out
     // of the first buffer. In next read cycle, pointer is reset to start of the first buffer)
-	float *rx_sig_start = (float *)malloc(12*ADC_BUFFER_SIZE*sizeof(float));
-    // end of first receive buffer
-	float *rx_sig_end = rx_sig_start + 12*ADC_BUFFER_SIZE;
-    // current location of pointer in signal buffer
-	float *rx_sig_ptr = rx_sig_start;
+	uint32_t demod_idx = 0, recv_idx = 0, end_idx = BUFF_LEN*ADC_BUFFER_SIZE-1, wrap_around = end_idx;
 
     // timing variables
     clock_t start=0, end1=0, end2 = 0;
@@ -337,26 +331,30 @@ int main(int argc, char** argv){
 		rp_AcqGetWritePointer(&curr_pos);
         // calculate the samp_recvd of the data to be acquired
 		samp_recvd = (curr_pos - prev_pos) % ADC_BUFFER_SIZE;
+
+        if ( recv_idx + samp_recvd > end_idx ){
+            fprintf(stdout,"crossed boundary\n");
+            wrap_around = recv_idx;
+            recv_idx = 0;
+        }
+
         // acquire the data into rx signal buffer from hardware ADC buffer
-	    rp_AcqGetDataV(RP_CH_1, prev_pos, &samp_recvd, rx_sig_ptr);
-		fprintf(stdout,"RX: Read out samples = %d, Current pos = %d, Prev_pos = %d, bits received = %d \n", samp_recvd, curr_pos, prev_pos, bits_recvd);
+	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, (rx_sig_buff+recv_idx) );
+		fprintf(stdout,"RX: Read out samples = %d, Current pos = %d, Prev_pos = %d, Rx Address = %p, bits received = %d \n", samp_recvd, curr_pos, prev_pos, rx_sig_buff+recv_idx, bits_recvd);
         // calculate the acquisition time
         end1 = clock() - start;
         // demodulate the receive signal and save the remaining unprocessed samples
-		samp_remng = ofdm_demod(rx_bin_ptr, rx_sig_ptr-samp_remng, samp_recvd+samp_remng, &bits_recvd);
+		samp_remng = ofdm_demod(rx_bin_ptr, demod_idx, samp_recvd + samp_remng, &bits_recvd, wrap_around);
         // update the ADC pointer position
 		prev_pos = curr_pos;
         // advance the signal buffer pointer
-        rx_sig_ptr += samp_recvd;
+        recv_idx += samp_recvd;
+        // advance the demod pointer in the buffer
+        demod_idx = (recv_idx - samp_remng) % wrap_around;
+        wrap_around = (samp_remng > samp_recvd ? wrap_around : end_idx);
+
         // advance the rx binary buffer
 		rx_bin_ptr += bits_recvd;
-
-        if (rx_sig_ptr >= rx_sig_end){
-            for(int i=0; i<samp_remng; i++)
-                rx_sig_start[i] = *(rx_sig_ptr-samp_remng+i);
-            rx_sig_ptr = rx_sig_start+samp_remng;
-            fprintf(stdout,"crossed boundary\n");
-        }
         // check if bin buffer end is reached
 		if ( rx_bin_ptr >= rx_bin_end)
 			break;
@@ -369,16 +367,16 @@ int main(int argc, char** argv){
 
     // save demodulated data
     for(int i = 0; i <N_FRAMES*N_SYM*N_DSC; i++){
-        fprintf(fp1," %d \n", *(rx_bin_start+i));
+        fprintf(fp1," %d \n", rx_bin_start[i]);
     }
-    for(int i = 0; i < (rx_sig_ptr-rx_sig_start)/sizeof(float); i++){
-        fprintf(fp2," %f \n", *(rx_sig_start+i));
+    for(int i = 0; i < recv_idx/sizeof(float); i++){
+        fprintf(fp2," %f \n", rx_sig_buff[i]);
     }
     fclose(fp1);
+    fclose(fp2);
 
     // Stop acquisition and release resources
     rp_AcqStop();
-	free(rx_sig_start);
 	free(rx_bin_start);
 	rp_Release();
 	fprintf(stdout,"RX: Acquisition Comeplete, Exiting.\n");
