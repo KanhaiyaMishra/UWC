@@ -23,7 +23,7 @@ LIBSO = $(LIBDIR)/lib
 # compiler options (-I= for includes, -g = to collect debugging info)
 CFLAGS  = -std=gnu99 -Wall -Werror -g -I$(LIBINC) -I$(INCDIR)
 # linker flags, -rpath=provide runtime LD_LIBRARY_PATH, -L=links .so with local .o files
-LDFLAGS =  -Wl,-rpath,$(LIBSO) -L$(LIBSO)
+LDFLAGS = -MD -Wl,-rpath,$(LIBSO) -L$(LIBSO)
 # standard library dependencies
 LDLIBS = -lm -lpthread -lrp
 # output executable file name
@@ -36,13 +36,13 @@ OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 ##------------main makefile script--------------##
 all: $(TARGET)
 
-# Linking
-$(TARGET): $(OBJECTS)
-	$(LD) $(LDFLAGS) $^ $(LDLIBS) -o $@
-
 # compiling
 $(OBJECTS): $(OBJDIR)/%.o: $(SRCDIR)/%.c
 	$(CC) -c $(CFLAGS) $< -o $@
+
+# Linking
+$(TARGET): $(OBJECTS)
+	$(LD) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 # cleaning
 .PHONY: clean

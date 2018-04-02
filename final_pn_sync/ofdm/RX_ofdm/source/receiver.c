@@ -5,14 +5,20 @@
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
-#include <time.h>
+#include <sys/time.h>
 #include "prbs.h"
 #include "ofdm.h"
 #include "deque.h"
 #include "kiss_fft.h"
 #include "redpitaya/rp.h"
+#define OFFLINE
+#define N_FRAMES 70
 
-#define N_FRAMES 10
+uint64_t GetTimeStamp(){
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    return tv.tv_sec*(uint64_t)1000000+tv.tv_usec;
+}
 
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
@@ -131,7 +137,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 	kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
 	kiss_fft_cfg ifft_cfg = kiss_fft_alloc(N_FFT, TRUE, NULL, NULL);
     const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
-    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, corr_th = 2.5;
+    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, corr_th = POST_DSF*1.5;
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0;
     static real_t max_of_min = 0.0, cros_corr_s=0.0, auto_corr_s=0.0, auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0;
     static dequeue window;
@@ -301,7 +307,7 @@ int main(int argc, char** argv){
     // of the first buffer. In next read cycle, pointer is reset to start of the first buffer)
 	uint32_t demod_idx = 0, recv_idx = 0, end_idx = N_FRAMES*ADC_BUFFER_SIZE;
     // timing variables
-    clock_t start=0, end1=0, end2 = 0;
+    uint64_t start=0, end1=0, end2 = 0;
 
 
 	fprintf(stdout, "RX: Entered\n");
@@ -334,7 +340,7 @@ int main(int argc, char** argv){
     // continue recieving untill receive signal buffer gets filled
 	while( TRUE ){
         // get the cpu clock at the start
-        start = clock();
+        start = GetTimeStamp();
         // get the current ADC write pointer
 		rp_AcqGetWritePointer(&curr_pos);
         // calculate the samp_recvd of the data to be acquired
@@ -351,7 +357,7 @@ int main(int argc, char** argv){
         // publish the acquisition details
 		fprintf(stdout,"RX: Read out samples = %d, Current pos = %d, Prev_pos = %d Receive Index = %d \n", samp_recvd, curr_pos, prev_pos, recv_idx);
         // calculate the acquisition time
-        end1 = clock() - start;
+        end1 = GetTimeStamp() - start;
         // demodulate the receive signal and save the remaining unprocessed samples
 		samp_remng = ofdm_demod(rx_bin_ptr, demod_idx, samp_recvd + samp_remng, &bits_recvd);
         // update the ADC pointer position
@@ -370,8 +376,8 @@ int main(int argc, char** argv){
 			break;
 
         // calculate the data processing time
-        end2 = clock() - end1 - start;
-        fprintf(stdout,"RX: Read time = %lf, Process time = %lf\n", (double)end1/CLOCKS_PER_SEC, (double)end2/CLOCKS_PER_SEC);
+        end2 = GetTimeStamp() - end1 - start;
+        fprintf(stdout,"RX: Read time = %lfms, Process time = %lfms\n", (double)end1/1000, (double)end2/1000);
 	}
 
 	FILE *fp1, *fp2;
