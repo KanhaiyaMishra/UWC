@@ -59,8 +59,6 @@ void qam_mod(complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_sym){
 		temp.r =  (2*gray_map[qam_r] -qam_limit)*norm_const;
 		temp.i = -(2*gray_map[qam_i] -qam_limit)*norm_const;
 
-//        fprintf(stdout,"TX: QAM symbol for bin value %d%d%d%d is %f+%fj\n", *(bin_data), *(bin_data+1), *(bin_data+2), *(bin_data+3), temp.r, temp.i);
-
         // advance the bin pointer to next symbol
 		bin_data += N_BITS;
 

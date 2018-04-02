@@ -16,8 +16,8 @@ typedef struct{
 }sync_params_t;
 
 #define OSF 8               // TX over sampling factor
-#define PRE_DSF 4           // RX downsampling before synchronization
-#define POST_DSF 2          // RX downsampling after synchronization
+#define PRE_DSF 2           // RX downsampling before synchronization
+#define POST_DSF 4          // RX downsampling after synchronization
 #define DCO                 // OFDM Type: DCO/FLIP
 #define M_QAM  4            // QAM order
 #define N_BITS 2            // bits per qam symbol
