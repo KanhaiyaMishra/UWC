@@ -11,7 +11,7 @@
 #include "deque.h"
 #include "kiss_fft.h"
 #include "redpitaya/rp.h"
-#define OFFLINE
+
 #define N_FRAMES 70
 
 uint64_t GetTimeStamp(){
