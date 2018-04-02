@@ -273,9 +273,9 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 	            #endif
 	        }
             sym_count += demod_sym;
-            samp_remng = samp_remng%DATA_SYM_LEN;
+            samp_remng -= demod_sym*DATA_SYM_LEN;
             *bits_recvd = demod_sym*N_QAM*N_BITS;
-            fprintf(stdout,"Demoduation completed, sym_count = %d, demod_idx = %d, remaining samples = %d, received bits = %d\n", sym_count, demod_idx, samp_remng, *bits_recvd);
+            fprintf(stdout,"Demoduation completed, sym_count = %d, demod_idx = %d, remaining samples = %d, received bits = %d\n", sym_count, demod_idx-72, samp_remng, *bits_recvd);
 	        kiss_fft_free(fft_cfg);
 	        kiss_fft_free(ifft_cfg);
         }
