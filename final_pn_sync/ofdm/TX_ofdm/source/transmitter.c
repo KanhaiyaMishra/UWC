@@ -10,7 +10,7 @@
 #include "ofdm.h"
 #include "kiss_fft.h"
 
-#define N_FRAMES 100
+#define N_FRAMES 50
 #define MAX_COUNT (1<<14)
 
 static real_t sync_sym[SYNC_SYM_LEN] = {0.0};
@@ -221,8 +221,8 @@ int main(int argc, char **argv){
 	uint64_t start = 0, end=0;
 	real_t freq = 125e6/(16384*64);
 	uint32_t period = round(1e6/freq), frm_num, i, pos;
-    real_t *tx_sig_ptr = (real_t *)malloc(2*ADC_BUFFER_SIZE*sizeof(real_t));
-    uint8_t *tx_bin_ptr = (uint8_t *)malloc(N_SYM*N_QAM*N_BITS*sizeof(uint8_t));
+    real_t tx_sig_ptr[ADC_BUFFER_SIZE]={0.0};
+    uint8_t tx_bin_ptr[N_SYM*N_QAM*N_BITS]={0};
     static volatile int32_t* dac_add;
 
     // get the DAC hardware address
@@ -281,8 +281,8 @@ int main(int argc, char **argv){
 */
 
 //  Releasing resources
-    free(tx_sig_ptr);
-	free(tx_bin_ptr);
+//    free(tx_sig_ptr);
+//	free(tx_bin_ptr);
 	rp_Release();
 	fprintf(stdout,"TX: Transmission Completed, Exiting TX.\n");
     return 0;
