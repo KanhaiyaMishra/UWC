@@ -12,7 +12,7 @@
 #include "kiss_fft.h"
 #include "redpitaya/rp.h"
 
-#define N_FRAMES 70
+#define N_FRAMES 40
 
 uint64_t GetTimeStamp(){
     struct timeval tv;
@@ -191,10 +191,10 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             }
             if(sync_done){
                 samp_remng += (idx1 - sync_idx);
-                fprintf(stdout,"Sync completed, sync_idx = %d, corr_count = %d, remaining samples = %d, demod_idx = %d\n", sync_idx, corr_count, samp_remng, demod_idx);
+                fprintf(stdout,"Sync completed, sync_idx = %d, corr_count = %d, remaining samples = %d,\n", sync_idx, corr_count, samp_remng);
                 fprintf(stdout,"Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
             } else{
-                fprintf(stdout,"Sync not completed, remng samples = %d, demod_idx = %d stop_demod = %d\n", samp_remng, demod_idx, idx1);
+                fprintf(stdout,"Sync not completed, stop_demod = %d, corr_count = %d, remng samples = %d\n", idx1, corr_count, samp_remng);
                 fprintf(stdout,"Sync not completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
             }
         }
@@ -321,7 +321,7 @@ int main(int argc, char** argv){
 
     generate_ofdm_sync();
     // wait till transmission is started
-	usleep(200000);
+	usleep(108000);
     // reset the ADC
     rp_AcqReset();
     // set the ADC sample rate (125e6/decimation)
