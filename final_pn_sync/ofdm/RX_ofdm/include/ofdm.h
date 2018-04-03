@@ -16,8 +16,8 @@ typedef struct{
 }sync_params_t;
 
 #define OSF 8               // TX over sampling factor
-#define PRE_DSF 4           // RX downsampling before synchronization
-#define POST_DSF 2          // RX downsampling after synchronization
+#define PRE_DSF 2           // RX downsampling before synchronization
+#define POST_DSF 4          // RX downsampling after synchronization
 #define DCO                 // OFDM Type: DCO/FLIP
 #define M_QAM  4            // QAM order
 #define N_BITS 2            // bits per qam symbol
@@ -42,6 +42,6 @@ FFT=128: Total Frame = 16384 [146*2*6*8 (data) + 150*2*1*8 (sync as well as pilo
 void qam_mod(complex_t *qam_tx, uint8_t *bin_tx, uint8_t sym_type);
 void qam_demod(uint8_t *bin_rx, complex_t *qam_rx);
 void ofdm_mod(real_t *ofdm_tx, uint8_t *bin_tx);
-uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t start_idx, uint32_t stop_idx, uint32_t *bits_recvd);
+uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uint32_t *bits_recvd);
 
 #endif
