@@ -10,7 +10,7 @@
 #include "ofdm.h"
 #include "kiss_fft.h"
 
-#define N_FRAMES 50
+#define N_FRAMES 60
 #define MAX_COUNT (1<<14)
 
 static real_t sync_sym[SYNC_SYM_LEN] = {0.0};
@@ -35,7 +35,7 @@ void qam_mod(complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_sym){
     // Nomalization constant for getting average unit power per ofdm symbol
     // Avg Energy = 2*(M_QAM - 1)/3), #QAM per OFDM Sym = N_DSC (N_DSC/2 for sync)
     // Extra factor of 4 to get Vpp less than 2 (DAC Amplitude Limitation)
-	real_t norm_const = 1/sqrt( 16*2*(M_QAM - 1)/3*N_DSC/(1+is_sync_sym) );
+	real_t norm_const = 1/sqrt( 20*2*(M_QAM - 1)/3*N_DSC/(1+is_sync_sym) );
 
 	// get the header and tail pointers of the output buffer
     // OFDM Sym = [ DC QAM[N_DSC] Zeros[N_FFT-N_DSC-1] conj(flip(QAM[N_DSC]))]
@@ -249,6 +249,7 @@ int main(int argc, char **argv){
 
     start = GetTimeStamp();
 	for(frm_num=1; frm_num<=N_FRAMES; frm_num++){
+
         rp_GenGetReadPointer(&pos, RP_CH_2);
 
         for(i=0; i<FRM_NUM_BITS; i++)
@@ -274,8 +275,6 @@ int main(int argc, char **argv){
 
 /*    FILE *fp;
     fp = fopen("./data.txt","w+");
-    for(i=0; i<DELAY; i++)
-        fprintf(fp,"%f\n",0.0f);
     for(i=0; i<ADC_BUFFER_SIZE; i++)
         fprintf(fp,"%f\n",tx_sig_ptr[i]);
 */
