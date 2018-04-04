@@ -11,8 +11,9 @@
 #include "deque.h"
 #include "kiss_fft.h"
 #include "redpitaya/rp.h"
-
-#define N_FRAMES 40
+#define AMP_ADJ 20
+#define DC_ERROR 0.0140
+#define N_FRAMES 50
 
 uint64_t GetTimeStamp(){
     struct timeval tv;
@@ -46,7 +47,7 @@ void qam_mod ( complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_sym)
     // max integer value of the real/imag component of the QAM symbol
     real_t qam_limit = pow(2, N_BITS/2) - 1;
     // Nomalization constant for getting average unit power per ofdm symbol
-    real_t norm_const = 1/sqrt( 16*2*(M_QAM - 1)/3*N_DSC/(1+is_sync_sym) );
+    real_t norm_const = 1/sqrt( 20*2*(M_QAM - 1)/3*N_DSC/(1+is_sync_sym) );
 
     // get the header and tail pointers of the output buffer
     head_ptr = qam_data + 1;
@@ -98,7 +99,7 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
 	complex_t temp;
 	uint32_t i, j, qam_sym_r, qam_sym_i;
 	real_t qam_limit = pow(2, N_BITS/2) - 1;
-	real_t norm_const = sqrt( 16*(2*(M_QAM - 1)/3)*N_DSC)/N_FFT;
+	real_t norm_const = sqrt( 20*(2*(M_QAM - 1)/3)*N_DSC)/N_FFT;
 
 	for(i=0; i<N_QAM; i++)
 	{
@@ -137,18 +138,18 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 	kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
 	kiss_fft_cfg ifft_cfg = kiss_fft_alloc(N_FFT, TRUE, NULL, NULL);
     const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
-    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, corr_th = POST_DSF*1.5;
+    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.75*(N_FFT*POST_DSF/AMP_ADJ/2);
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0;
     static real_t max_of_min = 0.0, auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0, cros_corr_s=0.0, auto_corr_s=0.0;
-    static dequeue window;
-    int32_t idx1=0, idx2=0, idx3=0, demod_sym=0, sync_correction = N_FFT/4;
+    dequeue window;
+    int32_t idx1=0, idx2=0, idx3=0, demod_sym=0, sync_err = N_FFT/4;
     complex_t *ch_ptr;
 
     idx1 = demod_idx;
     idx2 = (demod_idx+N_FFT*OSF/2);
     idx3 = (demod_idx+N_FFT*OSF);
 
-    fprintf(stdout,"Sync/Demod Started, Receive Index = %d, Received Samples = %d, window_size = %d\n", demod_idx, samp_remng, abs(window.rear-window.front));
+    fprintf(stdout,"Sync/Demod Started, Demod Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
 
     if(!sync_done){
         if(corr_count<0){
@@ -169,22 +170,21 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
         }
         if(corr_count>=0){
             for( ;samp_remng > OSF*N_FFT; samp_remng-=PRE_DSF) {
-                if( auto_corr > corr_th && corr_fact > 0.7){
+                if( auto_corr > auto_corr_th && corr_fact > 0.7){
                     while( !empty(&window) && window.data[window.rear].value >= corr_fact)
                                 dequeueR(&window);
                     enqueueR( &window, (pair){.value = corr_fact, .position = idx1} );
-                    while( (window.data[window.front].position + win_len) < idx1 )
+                    while( (window.data[window.front].position + win_len*PRE_DSF) < idx1 )
                         dequeueF(&window);
-                    if( window.data[window.front].value > max_of_min  && corr_count >= win_len*PRE_DSF ){
+                    if( window.data[window.front].value > max_of_min ){
                         max_of_min = window.data[window.front].value;
                         sync_idx = idx1 - win_len*PRE_DSF;
                         auto_corr_s = auto_corr;
                         cros_corr_s = cros_corr;
-                    }
-                    if (window.data[window.front].value < max_of_min){
+                    }else if (window.data[window.front].value < 0.85*max_of_min){
                         sync_done = 1;
                         samp_remng += (idx1 - sync_idx);
-                        fprintf(stdout,"Sync completed, corr_count = %d, remaining samples = %d, sync_idx = %d\n", corr_count, samp_remng, sync_idx);
+                        fprintf(stdout,"Sync completed, corr_count = %d, remaining samples = %d, SYNC_IDX = %d\n", corr_count, samp_remng, sync_idx);
                         fprintf(stdout,"Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
                         break;
                     }
@@ -208,7 +208,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             if ( samp_remng >= (N_FFT+n_cp_rem)*OSF ){
                 // collect #FFT samples for pilot estimation
     		    for( int i=0; i< N_FFT; i++)
-		    	    fft_in[i].r = rx_sig_buff[sync_idx + (n_cp_rem + i)*OSF + OSF/2];
+		    	    fft_in[i].r = rx_sig_buff[sync_idx + (n_cp_rem + i)*OSF];
                 // Take fft to get pilot symbols in frequency domain
     		    kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
 
@@ -218,12 +218,11 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                     hf[N_FFT-i] = comp_div( fft_out[N_FFT-i], sync_qam_tx[N_FFT-i]);
                 }
 
-                // Take ifft of channel coeficient to get time domain channel response
+                // Take ifft of coeficients to get time domain channel response
     		    kiss_fft( ifft_cfg, (const complex_t *)hf, ht);
 
-                // Start from mid point in the channel response since there will be two maxima
-                // Maximum ata loc within  [    NFFT/4.......................,NFFT/2+1,.......,N_FFT/2+max_sync_error+1,...,3*NFFT/4]
-                // Corresponds to delay of [NFFT/4+max_sync_err+1,.........,max_sync_error,..........0................,....,-NFFT/4+max_sync_error+1]
+                // Start from mid point in the channel response since there will be two maxima, due to anti-symmetricity in the pilot
+                // Only need to scan for MAX in a window of N_FFT/2 in the middle, this will give max correction of of +/-(N_FFT/4) samples
                 ch_ptr = ht+N_FFT/4+max_sync_error;
                 // Set dominant tap location in the channel to 0
                 float max_coef = comp_mag_sqr(ch_ptr[0]);
@@ -231,13 +230,26 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 for( int i=1; i<N_FFT/2; i++) {
                     if( max_coef < comp_mag_sqr(ch_ptr[i]) ){
                         max_coef = comp_mag_sqr(ch_ptr[i]);
-                        sync_correction = N_FFT/4-i;
+                        sync_err = N_FFT/4-i;
                     }
                 }
-                demod_idx = sync_idx + SYNC_SYM_LEN -  sync_correction*OSF;
-                samp_remng = samp_remng - SYNC_SYM_LEN + sync_correction*OSF;
+
+                // confirm if the tap is actually dominant (for cases when sync_idx happens to be on the boundary actual peak found might not be correct,
+                // One of the side peak might share almost equal power, Therefore need to recorrect sync by moving away either side of the boundary)
+                float l_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err-1]);
+                float r_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err+1]);
+                if((l_side_pk > 0.5*max_coef) || (r_side_pk > 0.5*max_coef)){
+                    sync_idx += 2;
+                    samp_remng -= 2;
+                    sync_corrected = 0;
+                    fprintf(stdout,"Sync correction was incorrect, central peak = %f, left side peak = %f, right side peak = %f\n", max_coef, l_side_pk, r_side_pk);
+                    return samp_remng;
+                }
+                demod_idx = sync_idx + SYNC_SYM_LEN -  sync_err*OSF;
+                samp_remng = samp_remng - SYNC_SYM_LEN + sync_err*OSF;
                 sync_corrected = 1;
-                fprintf(stdout,"Sync correction done by %d samples, demod_index = %d\n", sync_correction*OSF, demod_idx);
+                fprintf(stdout,"Sync correction done by %d samples, Corrected Sync Index = %d\n", sync_err*OSF, demod_idx);
+
             } else
                 fprintf(stdout,"Demoduation not completed, sync correction not completed\n");
         }
@@ -257,9 +269,9 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 	        for(int j=0; j<demod_sym; j++){
 		        for( int i=0; i< N_FFT; i++){
 	    	    #ifdef FLIP
-		    	    fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF + OSF/2) ] - rx_sig_buff[ (demod_idx + DATA_SYM_LEN + i*OSF + OSF/2) ];
+		    	    fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF) ] - rx_sig_buff[ (demod_idx + DATA_SYM_LEN + i*OSF) ];
 	    	    #elif defined(DCO)
-		    	    fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF + OSF/2) ];
+		    	    fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF) ];
 		        #endif
 		        }
 
@@ -297,11 +309,11 @@ int main(int argc, char** argv){
     // received samples, remaining samples, received bits, current and previous ADC ptr pos
 	uint32_t samp_recvd = 0, samp_remng =0, bits_recvd = 0, curr_pos, prev_pos=0;
     // receive binary buffer (one extra buffer to take care of spillage while checking end of buffer)
-	uint8_t rx_bin_start[(N_FRAMES+1)*N_SYM*N_QAM*N_BITS] = {0.0};
+	uint8_t rx_bin_buff[(N_FRAMES+1)*N_SYM*N_QAM*N_BITS] = {0.0};
     // end of last binary buffer (last frame)
-	uint8_t *rx_bin_end = rx_bin_start + N_FRAMES*N_SYM*N_QAM*N_BITS;
+	uint8_t *rx_bin_end = rx_bin_buff + N_FRAMES*N_SYM*N_QAM*N_BITS;
     // current location of pointer in binary buffer
-	uint8_t *rx_bin_ptr = rx_bin_start;
+	uint8_t *rx_bin_ptr = rx_bin_buff;
     // receive signal buffer (one extra buffer for the case when current read samples spill out
     // of the first buffer. In next read cycle, pointer is reset to start of the first buffer)
 	uint32_t demod_idx = 0, recv_idx = 0, end_idx = N_FRAMES*ADC_BUFFER_SIZE;
@@ -324,7 +336,7 @@ int main(int argc, char** argv){
 
     generate_ofdm_sync();
     // wait till transmission is started
-	usleep(100000);
+	usleep(104000);
     // reset the ADC
     rp_AcqReset();
     // set the ADC sample rate (125e6/decimation)
@@ -354,12 +366,12 @@ int main(int argc, char** argv){
         for (int i =0; i<samp_recvd; i++)
             fscanf(fp,"%f", (rx_sig_buff+recv_idx) );
         #else
-	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, (rx_sig_buff+recv_idx) );
-/*      int32_t temp;
+//	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, (rx_sig_buff+recv_idx) );
+        int32_t temp;
         for (int i =0; i<samp_recvd; i++){
             temp = (double) (adc_add[(prev_pos+i)%ADC_BUFFER_SIZE]);
-            rx_sig_buff[recv_idx+i] = (temp>8191)?(temp-(1<<14))/((double)(1<<13)):temp/((double)(1<<13));
-        }*/
+            rx_sig_buff[recv_idx+i] = (temp>8191)?(temp-(1<<14))/((double)(1<<13)):temp/((double)(1<<13)) + DC_ERROR;
+        }
         #endif
 
         // publish the acquisition details
@@ -377,28 +389,57 @@ int main(int argc, char** argv){
         // advance the rx binary buffer
 		rx_bin_ptr += bits_recvd;
         // check if sig buffer end is reached
-		if ( recv_idx > end_idx )
+		if ( recv_idx > end_idx ){
+            fprintf(stdout,"receiver signal buffer filled\n");
 			break;
+        }
         // check if bin buffer end is reached
-		if ( rx_bin_ptr > rx_bin_end)
-			break;
+		if ( rx_bin_ptr > rx_bin_end){
+   			break;
+        }
 
         // calculate the data processing time
         end2 = GetTimeStamp() - end1 - start;
         fprintf(stdout,"RX: Read time = %lfms, Process time = %lfms\n", (double)end1/1000, (double)end2/1000);
 	}
 
+
+    // BER Calculation
+    uint32_t recvd_frms = ( (rx_bin_ptr - rx_bin_buff)/sizeof(uint8_t) )/(N_SYM*N_QAM*N_BITS);
+    fprintf(stdout,"receiver signal buffer filled, num of received frames = %d\n", recvd_frms);
+
 	FILE *fp1, *fp2;
 	fp1 = fopen("./bin.txt","w+");
 	fp2 = fopen("./sig.txt","w+");
 
     // save demodulated data
-    for(int i = 0; i <N_FRAMES*N_SYM*N_QAM*N_BITS; i++){
-        fprintf(fp1," %d \n", rx_bin_start[i]);
+    for(int i = 0; i <recvd_frms*N_SYM*N_QAM*N_BITS; i++){
+        fprintf(fp1," %d \n", rx_bin_buff[i]);
     }
     for(int i = 0; i < recv_idx; i++){
         fprintf(fp2," %f \n", rx_sig_buff[i]);
     }
+
+/*    uint8_t tx_bin_buff[N_FRAMES*2] = {0.0};
+    uint32_t error_count[recvd_frms], rx_frm_num, tx_frm_num, i ,j;
+    float ber = 0.0;
+
+    for(tx_frm_num = 1; tx_frm_num<N_FRAMES*2; tx_frm_num++){
+        for(i=0; i<FRM_NUM_BITS; i++)
+            tx_bin_buff[ N_SYM*N_QAM*N_BITS*(tx_frm_num-1) + i] = ((tx_frm_num>>i)&1);
+        pattern_LFSR_byte(PRBS7, tx_bin_buff+N_SYM*N_QAM*N_BITS*(tx_frm_num-1)+FRM_NUM_BITS , N_SYM*N_QAM*N_BITS-FRM_NUM_BITS);
+    }
+
+    for(i=0; i<recvd_frms; i++){
+        rx_frm_num = 0;
+        for(j=0; j<FRM_NUM_BITS; j++)
+            rx_frm_num |= (rx_bin_buff[j+i*N_SYM*N_QAM*N_BITS]<<j);
+        for(j=0; j<(N_SYM*N_QAM*N_BITS-FRM_NUM_BITS); j++)
+            error_count[i] += (tx_bin_buff[ (rx_frm_num-1)*N_SYM*N_QAM*N_BITS + FRM_NUM_BITS +j ] != rx_bin_buff[FRM_NUM_BITS+j+i*N_SYM*N_QAM*N_BITS]);
+            ber += error_count[i]/(N_SYM*N_QAM*N_BITS);
+        fprintf(stdout,"Error Count for frame number %d = %d, Cumulative BER=%f\n", rx_frm_num,error_count[i], ber);
+    }
+*/
     fclose(fp1);
     fclose(fp2);
     #ifdef OFFLINE
@@ -419,14 +460,14 @@ int main(int argc, char** argv){
 
 
     start = clock();
-    samp_remng = ofdm_demod(rx_bin_start, rx_sig_start, samp_recvd, &bits_recvd);
+    samp_remng = ofdm_demod(rx_bin_buff, rx_sig_start, samp_recvd, &bits_recvd);
 
     end1 = clock() - start;
     fprintf(stdout,"RX: Read time = %lf, Process time = %lf\n", (double)end1/CLOCKS_PER_SEC, (double)end2/CLOCKS_PER_SEC);
 
     fprintf(stdout,"samp remaining = %d\n", samp_remng);
     for (int i=0; i<N_SYM*N_QAM*N_BITS; i++)
-        fprintf(fp1,"%d\n", rx_bin_start[i]);
+        fprintf(fp1,"%d\n", rx_bin_buff[i]);
 
     fclose(fp2);
     fclose(fp1);
