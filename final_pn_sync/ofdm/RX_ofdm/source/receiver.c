@@ -13,7 +13,7 @@
 #include "redpitaya/rp.h"
 #define AMP_ADJ 20
 #define DC_ERROR 0.0140
-#define N_FRAMES 50
+#define N_FRAMES 900
 
 uint64_t GetTimeStamp(){
     struct timeval tv;
@@ -21,10 +21,12 @@ uint64_t GetTimeStamp(){
     return tv.tv_sec*(uint64_t)1000000+tv.tv_usec;
 }
 
+FILE *output_fp;
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
 static complex_t fft_out_buff[N_FFT] = {{0.0}};
-static real_t rx_sig_buff[(N_FRAMES+1)*ADC_BUFFER_SIZE] = {0.0};
+static real_t rx_sig_buff[(N_FRAMES+100)*ADC_BUFFER_SIZE] = {0.0};
+static uint8_t rx_bin_buff[(N_FRAMES+1)*N_SYM*N_QAM*N_BITS] = {0.0};
 static uint8_t gray_map[16] __attribute__((aligned(1))) = { 0, 1, 3, 2, 6, 7, 5, 4, 12, 13, 15, 14, 10, 11,  9,  8 };
 //static uint8_t gray_map[2] __attribute__((aligned(1))) = { 0, 1};
 
@@ -149,7 +151,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
     idx2 = (demod_idx+N_FFT*OSF/2);
     idx3 = (demod_idx+N_FFT*OSF);
 
-    fprintf(stdout,"Sync/Demod Started, Demod Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
+    fprintf(output_fp,"Sync/Demod Started, Demod Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
 
     if(!sync_done){
         if(corr_count<0){
@@ -166,7 +168,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 corr_fact = fabs(cros_corr/auto_corr);
                 corr_count++;
             } else
-                fprintf(stdout,"Sync not completed samples not enough, demod_idx = %d, remaining samples = %d\n", demod_idx, samp_remng);
+                fprintf(output_fp,"Sync not completed samples not enough, demod_idx = %d, remaining samples = %d\n", demod_idx, samp_remng);
         }
         if(corr_count>=0){
             for( ;samp_remng > OSF*N_FFT; samp_remng-=PRE_DSF) {
@@ -184,8 +186,8 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                     }else if (window.data[window.front].value < 0.85*max_of_min){
                         sync_done = 1;
                         samp_remng += (idx1 - sync_idx);
-                        fprintf(stdout,"Sync completed, corr_count = %d, remaining samples = %d, SYNC_IDX = %d\n", corr_count, samp_remng, sync_idx);
-                        fprintf(stdout,"Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
+                        fprintf(output_fp,"Sync completed, corr_count = %d, remaining samples = %d, SYNC_IDX = %d\n", corr_count, samp_remng, sync_idx);
+                        fprintf(output_fp,"Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
                         break;
                     }
                 }
@@ -198,8 +200,8 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 idx3 = (idx3 + PRE_DSF);
             }
             if(!sync_done){
-                fprintf(stdout,"Sync not completed, corr_count = %d, remng samples = %d, stop_demod = %d\n", corr_count, samp_remng, idx1);
-                fprintf(stdout,"Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
+                fprintf(output_fp,"Sync not completed, corr_count = %d, remng samples = %d, stop_demod = %d\n", corr_count, samp_remng, idx1);
+                fprintf(output_fp,"Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
             }
         }
     }
@@ -238,20 +240,20 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 // One of the side peak might share almost equal power, Therefore need to recorrect sync by moving away either side of the boundary)
                 float l_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err-1]);
                 float r_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err+1]);
-                if((l_side_pk > 0.5*max_coef) || (r_side_pk > 0.5*max_coef)){
+                if(l_side_pk > 0.5*max_coef){
+                    sync_idx -= 2;
+                    samp_remng += 2;
+                } else if(r_side_pk > 0.5*max_coef){
                     sync_idx += 2;
                     samp_remng -= 2;
-                    sync_corrected = 0;
-                    fprintf(stdout,"Sync correction was incorrect, central peak = %f, left side peak = %f, right side peak = %f\n", max_coef, l_side_pk, r_side_pk);
-                    return samp_remng;
                 }
                 demod_idx = sync_idx + SYNC_SYM_LEN -  sync_err*OSF;
                 samp_remng = samp_remng - SYNC_SYM_LEN + sync_err*OSF;
                 sync_corrected = 1;
-                fprintf(stdout,"Sync correction done by %d samples, Corrected Sync Index = %d\n", sync_err*OSF, demod_idx);
+                fprintf(output_fp,"Sync correction done by %d samples, Corrected Sync Index = %d\n", sync_err*OSF, demod_idx);
 
             } else
-                fprintf(stdout,"Demoduation not completed, sync correction not completed\n");
+                fprintf(output_fp,"Demoduation not completed, sync correction not completed\n");
         }
         if (sync_corrected){
             if ( samp_remng >= (N_SYM-sym_count)*DATA_SYM_LEN ){
@@ -292,7 +294,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             sym_count += demod_sym;
             samp_remng -= demod_sym*DATA_SYM_LEN;
             *bits_recvd = demod_sym*N_QAM*N_BITS;
-            fprintf(stdout,"Demoduation completed, sym_count = %d, demod_idx = %d, remaining samples = %d, received bits = %d\n", sym_count, demod_idx-72, samp_remng, *bits_recvd);
+            fprintf(output_fp,"Demoduation completed, sym_count = %d, demod_idx = %d, remaining samples = %d, received bits = %d\n", sym_count, demod_idx-72, samp_remng, *bits_recvd);
 	        kiss_fft_free(fft_cfg);
 	        kiss_fft_free(ifft_cfg);
         }
@@ -308,15 +310,13 @@ int main(int argc, char** argv){
 
     // received samples, remaining samples, received bits, current and previous ADC ptr pos
 	uint32_t samp_recvd = 0, samp_remng =0, bits_recvd = 0, curr_pos, prev_pos=0;
-    // receive binary buffer (one extra buffer to take care of spillage while checking end of buffer)
-	uint8_t rx_bin_buff[(N_FRAMES+1)*N_SYM*N_QAM*N_BITS] = {0.0};
     // end of last binary buffer (last frame)
 	uint8_t *rx_bin_end = rx_bin_buff + N_FRAMES*N_SYM*N_QAM*N_BITS;
     // current location of pointer in binary buffer
 	uint8_t *rx_bin_ptr = rx_bin_buff;
     // receive signal buffer (one extra buffer for the case when current read samples spill out
     // of the first buffer. In next read cycle, pointer is reset to start of the first buffer)
-	uint32_t demod_idx = 0, recv_idx = 0, end_idx = N_FRAMES*ADC_BUFFER_SIZE;
+	uint32_t demod_idx = 0, recv_idx = 0, end_idx = (99+N_FRAMES)*ADC_BUFFER_SIZE;
     // timing variables
     uint64_t start=0, end1=0, end2 = 0;
 
@@ -325,8 +325,9 @@ int main(int argc, char** argv){
     // get the DAC hardware address
     adc_add = (volatile int32_t*)rp_AcqGetAdd(RP_CH_2);
 
+    output_fp = fopen("output.txt","w+");
 
-	fprintf(stdout, "RX: Entered, Address = %p\n", adc_add);
+	fprintf(output_fp, "RX: Entered, Address = %p\n", adc_add);
     // generate the pilots for synchronization error correction exactly same as in Transmit Program
 
     #ifdef OFFLINE
@@ -375,7 +376,7 @@ int main(int argc, char** argv){
         #endif
 
         // publish the acquisition details
-		fprintf(stdout,"RX: Read out samples = %d, Current pos = %d, Prev_pos = %d Receive Index = %d \n", samp_recvd, curr_pos, prev_pos, recv_idx);
+		fprintf(output_fp,"RX: Read out samples = %d, Current pos = %d, Prev_pos = %d Receive Index = %d \n", samp_recvd, curr_pos, prev_pos, recv_idx);
         // calculate the acquisition time
         end1 = GetTimeStamp() - start;
         // demodulate the receive signal and save the remaining unprocessed samples
@@ -390,7 +391,7 @@ int main(int argc, char** argv){
 		rx_bin_ptr += bits_recvd;
         // check if sig buffer end is reached
 		if ( recv_idx > end_idx ){
-            fprintf(stdout,"receiver signal buffer filled\n");
+            fprintf(output_fp,"receiver signal buffer filled\n");
 			break;
         }
         // check if bin buffer end is reached
@@ -400,13 +401,13 @@ int main(int argc, char** argv){
 
         // calculate the data processing time
         end2 = GetTimeStamp() - end1 - start;
-        fprintf(stdout,"RX: Read time = %lfms, Process time = %lfms\n", (double)end1/1000, (double)end2/1000);
+        fprintf(output_fp,"RX: Read time = %lfms, Process time = %lfms\n", (double)end1/1000, (double)end2/1000);
 	}
 
 
     // BER Calculation
     uint32_t recvd_frms = ( (rx_bin_ptr - rx_bin_buff)/sizeof(uint8_t) )/(N_SYM*N_QAM*N_BITS);
-    fprintf(stdout,"receiver signal buffer filled, num of received frames = %d\n", recvd_frms);
+    fprintf(output_fp,"receiver signal buffer filled, num of received frames = %d\n", recvd_frms);
 
 	FILE *fp1, *fp2;
 	fp1 = fopen("./bin.txt","w+");
@@ -416,11 +417,12 @@ int main(int argc, char** argv){
     for(int i = 0; i <recvd_frms*N_SYM*N_QAM*N_BITS; i++){
         fprintf(fp1," %d \n", rx_bin_buff[i]);
     }
-    for(int i = 0; i < recv_idx; i++){
+/*    for(int i = 0; i < recv_idx; i++){
         fprintf(fp2," %f \n", rx_sig_buff[i]);
     }
 
-/*    uint8_t tx_bin_buff[N_FRAMES*2] = {0.0};
+
+    uint8_t tx_bin_buff[N_FRAMES*2] = {0.0};
     uint32_t error_count[recvd_frms], rx_frm_num, tx_frm_num, i ,j;
     float ber = 0.0;
 
@@ -437,7 +439,7 @@ int main(int argc, char** argv){
         for(j=0; j<(N_SYM*N_QAM*N_BITS-FRM_NUM_BITS); j++)
             error_count[i] += (tx_bin_buff[ (rx_frm_num-1)*N_SYM*N_QAM*N_BITS + FRM_NUM_BITS +j ] != rx_bin_buff[FRM_NUM_BITS+j+i*N_SYM*N_QAM*N_BITS]);
             ber += error_count[i]/(N_SYM*N_QAM*N_BITS);
-        fprintf(stdout,"Error Count for frame number %d = %d, Cumulative BER=%f\n", rx_frm_num,error_count[i], ber);
+        fprintf(output_fp,"Error Count for frame number %d = %d, Cumulative BER=%f\n", rx_frm_num,error_count[i], ber);
     }
 */
     fclose(fp1);
@@ -463,9 +465,9 @@ int main(int argc, char** argv){
     samp_remng = ofdm_demod(rx_bin_buff, rx_sig_start, samp_recvd, &bits_recvd);
 
     end1 = clock() - start;
-    fprintf(stdout,"RX: Read time = %lf, Process time = %lf\n", (double)end1/CLOCKS_PER_SEC, (double)end2/CLOCKS_PER_SEC);
+    fprintf(output_fp,"RX: Read time = %lf, Process time = %lf\n", (double)end1/CLOCKS_PER_SEC, (double)end2/CLOCKS_PER_SEC);
 
-    fprintf(stdout,"samp remaining = %d\n", samp_remng);
+    fprintf(output_fp,"samp remaining = %d\n", samp_remng);
     for (int i=0; i<N_SYM*N_QAM*N_BITS; i++)
         fprintf(fp1,"%d\n", rx_bin_buff[i]);
 
