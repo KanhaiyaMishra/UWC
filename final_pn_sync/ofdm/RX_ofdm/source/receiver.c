@@ -12,7 +12,7 @@
 #include "kiss_fft.h"
 #include "redpitaya/rp.h"
 #define AMP_ADJ 20
-#define DC_ERROR 0.0140
+#define DC_ERROR 0.0
 #define N_FRAMES 900
 
 uint64_t GetTimeStamp(){
@@ -143,9 +143,8 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
     const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.75*(N_FFT*POST_DSF/AMP_ADJ/2);
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0;
     static real_t max_of_min = 0.0, auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0, cros_corr_s=0.0, auto_corr_s=0.0;
+    uint32_t idx1=0, idx2=0, idx3=0, demod_sym=0, sync_err = N_FFT/4;
     dequeue window;
-    int32_t idx1=0, idx2=0, idx3=0, demod_sym=0, sync_err = N_FFT/4;
-    complex_t *ch_ptr;
 
     idx1 = demod_idx;
     idx2 = (demod_idx+N_FFT*OSF/2);
@@ -225,7 +224,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 
                 // Start from mid point in the channel response since there will be two maxima, due to anti-symmetricity in the pilot
                 // Only need to scan for MAX in a window of N_FFT/2 in the middle, this will give max correction of of +/-(N_FFT/4) samples
-                ch_ptr = ht+N_FFT/4+max_sync_error;
+                complex_t *ch_ptr = ht+N_FFT/4+max_sync_error;
                 // Set dominant tap location in the channel to 0
                 float max_coef = comp_mag_sqr(ch_ptr[0]);
                 // Compare and update the dominant tap (maximum)
@@ -293,12 +292,12 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 	        }
             sym_count += demod_sym;
             samp_remng -= demod_sym*DATA_SYM_LEN;
-            *bits_recvd = demod_sym*N_QAM*N_BITS;
             fprintf(output_fp,"Demoduation completed, sym_count = %d, demod_idx = %d, remaining samples = %d, received bits = %d\n", sym_count, demod_idx-72, samp_remng, *bits_recvd);
 	        kiss_fft_free(fft_cfg);
 	        kiss_fft_free(ifft_cfg);
         }
     }
+    *bits_recvd = (demod_sym*N_QAM*N_BITS);
     return samp_remng;
 }
 
@@ -417,11 +416,10 @@ int main(int argc, char** argv){
     for(int i = 0; i <recvd_frms*N_SYM*N_QAM*N_BITS; i++){
         fprintf(fp1," %d \n", rx_bin_buff[i]);
     }
+
 /*    for(int i = 0; i < recv_idx; i++){
         fprintf(fp2," %f \n", rx_sig_buff[i]);
     }
-
-
     uint8_t tx_bin_buff[N_FRAMES*2] = {0.0};
     uint32_t error_count[recvd_frms], rx_frm_num, tx_frm_num, i ,j;
     float ber = 0.0;
