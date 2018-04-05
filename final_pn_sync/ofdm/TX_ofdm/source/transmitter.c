@@ -10,7 +10,7 @@
 #include "ofdm.h"
 #include "kiss_fft.h"
 
-#define N_FRAMES 60
+#define N_FRAMES 900
 #define MAX_COUNT (1<<14)
 
 static real_t sync_sym[SYNC_SYM_LEN] = {0.0};
