@@ -1,4 +1,5 @@
 bin/
+log/
 *.o
 *.txt
 !important.txt
