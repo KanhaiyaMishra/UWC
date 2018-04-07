@@ -249,79 +249,41 @@ int main(int argc, char **argv){
 
     start = GetTimeStamp();
 	for(frm_num=1; frm_num<=N_FRAMES; frm_num++){
-
+        // get the read pointer position once to update from zero
         rp_GenGetReadPointer(&pos, RP_CH_2);
-
+        // write the frame number into binary buffer
         for(i=0; i<FRM_NUM_BITS; i++)
             tx_bin_ptr[i] = ((frm_num>>i)&1);
-
+        // write the prbs in the binary buffer
 		pattern_LFSR_byte(PRBS7, tx_bin_ptr+FRM_NUM_BITS, N_SYM*N_QAM*N_BITS-FRM_NUM_BITS);
-
+        // modulate the binary data to generate OFDM signal
 		ofdm_mod(tx_sig_ptr, tx_bin_ptr);
-
+        // Write the signal samples into the DAC Buffer
         for(i=0; i<ADC_BUFFER_SIZE;){
+            // get the update read pointer position
             rp_GenGetReadPointer(&pos, RP_CH_2);
+            // if read pointer is at zero, change current position to end
             pos = ((pos==0)?(ADC_BUFFER_SIZE):pos);
+            // write the data into the buffer upto current position(convert real wihtin (-1,1) to 14 bit DAC count (0 to 16383) )
             for(;i<pos;i++)
                 dac_add[i] = ((int32_t)(tx_sig_ptr[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_ptr[i]>0)-1)) & (MAX_COUNT-1));
         }
+        // enable the output for current frame
 		rp_GenOutEnable(RP_CH_2);
+        // publish the frame number
 		printf("TX: Transmitting Frame Num = %d\n",frm_num);
 	}
+    // wait for the last frame
 	usleep(period);
+    // calculate total transmission time
    	end = GetTimeStamp()-start;
+    // publish the transmitted frames and total time
 	fprintf(stdout,"TX: Transmitted %d Frames in %lf ms\n", N_FRAMES, (double)end/1000);
+    // disable the DAC
 	rp_GenOutDisable(RP_CH_2);
 
-/*    FILE *fp;
-    fp = fopen("./data.txt","w+");
-    for(i=0; i<ADC_BUFFER_SIZE; i++)
-        fprintf(fp,"%f\n",tx_sig_ptr[i]);
-*/
-
 //  Releasing resources
-//    free(tx_sig_ptr);
-//	free(tx_bin_ptr);
 	rp_Release();
 	fprintf(stdout,"TX: Transmission Completed, Exiting TX.\n");
     return 0;
 }
-/*
-        // Calculate symbol power to verify
-        Ps = 0.0;
-        dot_product( (real_t*)ifft_out, (real_t*)ifft_out, 2*N_FFT, &Ps);
-        max = maximum( (real_t*)ifft_out, 2*N_FFT);
-        min = minimum( (real_t*)ifft_out, 2*N_FFT);
-        fprintf(stdout,"Sym Power = %f, Max, Min Amp = %f, %f\n",Ps, max, min);
-*/
-/*
-static inline complex_t conjugate(complex_t num){
-	num.i = -num.i;
-	return num;
-}
-
-static real_t dot_product(real_t* arr1, real_t* arr2, uint32_t size){
-    real_t temp=0.0;
-    for(int i=0; i<size; i++)
-		temp += (*arr1++)*(*arr2++);
-    return temp;
-}
-
-static real_t maximum(real_t* arr, uint32_t size){
-	real_t max=0.0;
-	for(int i=0; i<size; i++){
-		max = max*( max > *arr) + (*arr)*( *arr > max);
-		arr++;
-	}
-	return max;
-}
-
-static real_t minimum(real_t* arr, uint32_t size){
-	real_t min=0.0;
-	for(int i=0; i<size; i++){
-		min = min*( min < *arr) + (*arr)*( *arr < min);
-		arr++;
-	}
-	return min;
-}
-*/
