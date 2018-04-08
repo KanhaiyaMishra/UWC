@@ -176,7 +176,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
     idx3 = (demod_idx+N_FFT*OSF);
 
     // log the receive index and number of samples received
-    fprintf(trace_fp,"Sync/Demod Started, Demod Index = %d, Bin Index = %d, Received Samples = %d\n", demod_idx, (bin_rx-rx_bin_buff), samp_remng);
+    fprintf(trace_fp,"RX: Sync/Demod Started, Demod Index = %d, Bin Index = %d, Received Samples = %d\n", demod_idx, (bin_rx-rx_bin_buff), samp_remng);
 
     // check whether sync is completed or not
     if(!sync_done){
@@ -199,7 +199,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 corr_fact = fabs(cros_corr/auto_corr);
                 corr_count++;
             } else
-                fprintf(trace_fp,"Sync not completed samples not enough, demod_idx = %d, remaining samples = %d\n", demod_idx, samp_remng);
+                fprintf(trace_fp,"RX: Sync not completed samples not enough, demod_idx = %d, remaining samples = %d\n", demod_idx, samp_remng);
         }
         if(corr_count>=0){
             // compute correlation for forward indices untill remaining samples are less than required by correlation
@@ -230,8 +230,9 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                         sync_done = 1;
                         // compute remaining samples from the sync index
                         samp_remng += (idx1 - sync_idx);
-                        fprintf(trace_fp,"Sync completed, corr_count = %d, remaining samples = %d, SYNC_IDX[%d] = %d\n", corr_count, samp_remng, frm_count, sync_idx);
-                        fprintf(trace_fp,"Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
+                        fprintf(stdout,"RX: Receiving Frame number = %d \n", frm_count);
+                        fprintf(trace_fp,"RX: Sync completed, corr_count = %d, remaining samples = %d, SYNC_IDX[%d] = %d\n", corr_count, samp_remng, frm_count, sync_idx);
+                        fprintf(trace_fp,"RX: Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
                         break;
                     }
                 }
@@ -246,8 +247,8 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 idx3 = (idx3 + PRE_DSF);
             }
             if(!sync_done){
-                fprintf(trace_fp,"Sync not completed, corr_count = %d, remng samples = %d, stop_demod = %d\n", corr_count, samp_remng, idx1);
-                fprintf(trace_fp,"Sync not completed, max of min = %f, auto corr = %f, cross_corr=%f\n", corr_fact, auto_corr, cros_corr);
+                fprintf(trace_fp,"RX: Sync not completed, corr_count = %d, remng samples = %d, stop_demod = %d\n", corr_count, samp_remng, idx1);
+                fprintf(trace_fp,"RX: Sync not completed, max of min = %f, auto corr = %f, cross_corr=%f\n", corr_fact, auto_corr, cros_corr);
             }
         }
     }
@@ -300,10 +301,10 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 demod_idx = sync_idx + SYNC_SYM_LEN - sync_err*OSF;
                 samp_remng = samp_remng - SYNC_SYM_LEN + sync_err*OSF;
                 sync_corrected = 1;
-                fprintf(trace_fp,"Sync correction done by %d samples, Corrected Sync Index = %d\n", sync_err*OSF, demod_idx);
+                fprintf(trace_fp,"RX: Sync correction done by %d samples, Corrected Sync Index = %d\n", sync_err*OSF, demod_idx);
 
             } else
-                fprintf(trace_fp,"Demoduation not completed, sync correction not completed\n");
+                fprintf(trace_fp,"RX: Demoduation not completed, sync correction not completed\n");
         }
         // start demdoulation once sync correction is done
         if (sync_corrected){
@@ -355,7 +356,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             // shift the demodulation index back the base from CP
             demod_idx = (demod_idx - N_CP_DATA*OSF);
             // log the demodulaion information
-            fprintf(trace_fp,"Demoduation completed, sym_count = %d, demod_idx = %d, remaining samples = %d, received bits = %d\n", sym_count, demod_idx, samp_remng, *bits_recvd);
+            fprintf(trace_fp,"RX: Demoduation completed, sym_count = %d, demod_idx = %d, remaining samples = %d, received bits = %d\n", sym_count, demod_idx, samp_remng, demod_sym*N_QAM*N_BITS);
             kiss_fft_free(fft_cfg);
             kiss_fft_free(ifft_cfg);
         }
@@ -447,11 +448,8 @@ int main(int argc, char** argv){
         demod_idx = recv_idx - samp_remng;
         // advance the rx binary buffer
         rx_bin_ptr += bits_recvd;
-        // check if sig buffer end is reached
-        if ( recv_idx > end_idx )
-            break;
-        // check if bin buffer end is reached
-        if ( rx_bin_ptr > rx_bin_end)
+        // break if sig buffer end is reached or all frames are received
+        if ( recv_idx > end_idx || rx_bin_ptr > rx_bin_end)
    	        break;
 
         // calculate the data processing time
@@ -461,7 +459,7 @@ int main(int argc, char** argv){
 
     // Calculate the number of frames received
     uint32_t recvd_frms = ( (rx_bin_ptr - rx_bin_buff)/sizeof(uint8_t) )/bits_per_frame;
-    fprintf(stdout,"receiver signal buffer filled, num of received frames = %d\n", recvd_frms);
+    fprintf(stdout,"RX: Receiver signal/binary buffer filled, num of received frames = %d\n", recvd_frms);
 
     uint32_t error_count[recvd_frms], rx_frm_num, tx_frm_num = 1, i ,j, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
     uint8_t *tx_bin_buff = (uint8_t *)malloc(data_bits*sizeof(uint8_t));
@@ -489,15 +487,15 @@ int main(int argc, char** argv){
             valid_frms +=1;
             missd_frms +=frm_diff;
             ber += (double)error_count[i];
-            fprintf(stdout,"Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
+            fprintf(trace_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
             invalid_frms++;
-            fprintf(stdout,"Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
+            fprintf(trace_fp,"RX: Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
         }
     }
     ber = ber/(valid_frms*data_bits);
-    fprintf(stdout,"Total received valid frames = %d with BER = %f\n", valid_frms, ber);
-    fprintf(stdout,"Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
+    fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
+    fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
     // save demodulated data
     for(i = 0; i <recvd_frms*N_SYM*N_QAM*N_BITS; i++){
