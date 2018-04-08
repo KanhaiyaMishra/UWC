@@ -21,7 +21,7 @@
 // DC error of ADC
 #define DC_ERROR 0.0140
 // number of frames to be received
-#define N_FRAMES 900
+#define N_FRAMES 1000
 
 uint64_t GetTimeStamp(){
     struct timeval tv;
@@ -166,6 +166,9 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
     // base index of receive data, mid index (base + corr_len), end index (base + 2*corr_len), default sync error (depends on the range of coefficients over which maxima is found)
     uint32_t idx1=0, idx2=0, idx3=0, demod_sym=0, sync_err = N_FFT/4;
     // double ended queue to implement continuous window minimum using double sorted set
+    // Pair Struct holds: Coor_fact and corresponding index,
+    // Dequeue holds: base add of a static 'pair' array, front and rear index of within in the queue
+    static pair queue[POST_DSF*N_CP_SYNC+2];
     dequeue window;
 
     idx1 = demod_idx;
@@ -183,8 +186,8 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             sym_count = 0;
             cros_corr = 0;
             auto_corr = 0;
-            memset( window.data, 0.0, MAX*sizeof(pair));
-            initialize(&window);
+            memset(queue, 0, (win_len+2)*(sizeof(float)+sizeof(int)));
+            initialize(&window, queue, win_len+2);
             // make sure received samples are more than correlation window
             if(samp_remng >= OSF*N_FFT){
                 // compute cross and auto correlation at first receive index
@@ -205,22 +208,23 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 // start computing window minimum once thresholds are crossed
                 if( auto_corr > auto_corr_th && corr_fact >0.3){
                     // remove all elements from rear having higher corr factor than current corr_fact (they will never be the window minimum in future)
-                    while( !empty(&window) && window.data[window.rear].value >= corr_fact)
+                    while( !empty(&window) && window.base_ptr[window.rear].value >= corr_fact)
                         dequeueR(&window);
                     // add the current element (corr_fact and position) from rear
                     enqueueR( &window, (pair){.value = corr_fact, .position = idx1} );
                     // remove all the elements from front having indices before window length from current index
-                    while( (window.data[window.front].position + win_len*PRE_DSF) < idx1 )
+                    while( (window.base_ptr[window.front].position + (win_len*PRE_DSF)) < idx1 )
                         dequeueF(&window);
+//                    fprintf(stdout,"front location = %d, rear_location = %d\n", window.front, window.rear);
                     // check whether current corr_fact is the maximum window minimum and save its index
-                    if( window.data[window.front].value > max_of_min ){
-                        max_of_min = window.data[window.front].value;
+                    if( window.base_ptr[window.front].value > max_of_min ){
+                        max_of_min = window.base_ptr[window.front].value;
                         // for current index, algorithm calculates window minimum for the index one window behind
-                        sync_idx = idx1 - win_len*PRE_DSF;
+                        sync_idx = idx1 - (win_len*PRE_DSF);
                         // also save the auto and cross correlation at sync point
                         auto_corr_s = auto_corr;
                         cros_corr_s = cros_corr;
-                    }else if (window.data[window.front].value < 0.6*max_of_min){
+                    }else if (window.base_ptr[window.front].value < 0.6*max_of_min){
                         frm_count++;
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
                         sync_done = 1;
@@ -256,16 +260,15 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                     fft_in[i].r = rx_sig_buff[sync_idx + (n_cp_rem + i)*OSF];
 
                 // Take fft to get pilot symbols in frequency domain
-    		kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
+                kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
 
                 // calculate channel coefficients by dividing transmit pilots (only at odd subcarriers)
                 for (int i = 1; i<N_QAM; i+=2){
                     hf[i] = comp_div( fft_out[i], sync_qam_tx[i]);
                     hf[N_FFT-i] = comp_div( fft_out[N_FFT-i], sync_qam_tx[N_FFT-i]);
                 }
-
                 // Take ifft of coeficients to get time domain channel response
-    		kiss_fft( ifft_cfg, (const complex_t *)hf, ht);
+               	kiss_fft( ifft_cfg, (const complex_t *)hf, ht);
 
                 // Start from mid point in the channel response since there will be two maxima, due to anti-symmetricity in the pilot
                 // Only need to scan for MAX in a window of N_FFT/2 in the middle, this will give max correction of of +/-(N_FFT/4) samples
@@ -294,7 +297,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                     samp_remng -= 2;
                 }
                 // compute the demodulation index and remaining samples after sync correction
-                demod_idx = sync_idx + SYNC_SYM_LEN -  sync_err*OSF;
+                demod_idx = sync_idx + SYNC_SYM_LEN - sync_err*OSF;
                 samp_remng = samp_remng - SYNC_SYM_LEN + sync_err*OSF;
                 sync_corrected = 1;
                 fprintf(trace_fp,"Sync correction done by %d samples, Corrected Sync Index = %d\n", sync_err*OSF, demod_idx);
@@ -333,7 +336,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 
                 // Compute FFT and demdoulate QAM data into binary buffer
                 kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
-	        qam_demod( bin_rx, (fft_out+1));
+                qam_demod( bin_rx, (fft_out+1));
 
                 // get rx buffer pointer without cp for next symbol
                 demod_idx += DATA_SYM_LEN;
@@ -377,7 +380,7 @@ int main(int argc, char** argv){
     uint8_t *rx_bin_ptr = rx_bin_buff;
     // receive signal buffer (one extra buffer for the case when current read samples spill out
     // of the first buffer. In next read cycle, pointer is reset to start of the first buffer)
-    uint32_t demod_idx = 0, recv_idx = 0, end_idx = (99+N_FRAMES)*ADC_BUFFER_SIZE;
+    uint32_t demod_idx = 0, recv_idx = 0, end_idx = (9+N_FRAMES)*ADC_BUFFER_SIZE;
     // timing variables
     uint64_t start=0, end1=0, end2 = 0;
     // get the DAC hardware address
@@ -500,6 +503,7 @@ int main(int argc, char** argv){
     for(i = 0; i <recvd_frms*N_SYM*N_QAM*N_BITS; i++){
         fprintf(bin_fp," %d \n", rx_bin_buff[i]);
     }
+
     fclose(bin_fp);
     fclose(trace_fp);
 
