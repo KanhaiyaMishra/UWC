@@ -10,7 +10,7 @@
 #include "ofdm.h"
 #include "kiss_fft.h"
 
-#define N_FRAMES 900
+#define N_FRAMES 1010
 #define MAX_COUNT (1<<14)
 
 static real_t sync_sym[SYNC_SYM_LEN] = {0.0};
@@ -27,44 +27,42 @@ uint64_t GetTimeStamp(){
 void qam_mod(complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_sym){
 
     // temp head and tail pointers for the output buffer
-	complex_t temp, *head_ptr, *tail_ptr;
+    complex_t temp, *head_ptr, *tail_ptr;
     // temp variable for real and imag components of the QAM symbol
-	uint32_t j, i, qam_r, qam_i;
+    uint32_t j, i, qam_r, qam_i;
     // max integer value of the real/imag component of the QAM symbol
-	real_t qam_limit = pow(2, N_BITS/2) - 1;
+    real_t qam_limit = pow(2, N_BITS/2) - 1;
     // Nomalization constant for getting average unit power per ofdm symbol
     // Avg Energy = 2*(M_QAM - 1)/3), #QAM per OFDM Sym = N_DSC (N_DSC/2 for sync)
     // Extra factor of 4 to get Vpp less than 2 (DAC Amplitude Limitation)
-	real_t norm_const = 1/sqrt( 20*2*(M_QAM - 1)/3*N_DSC/(1+is_sync_sym) );
+    real_t norm_const = 1/sqrt( 20*2*(M_QAM - 1)/3*N_DSC/(1+is_sync_sym) );
 
-	// get the header and tail pointers of the output buffer
+    // get the header and tail pointers of the output buffer
     // OFDM Sym = [ DC QAM[N_DSC] Zeros[N_FFT-N_DSC-1] conj(flip(QAM[N_DSC]))]
-	head_ptr = qam_data + 1;
-	tail_ptr = qam_data + N_FFT - 1;
+    head_ptr = qam_data + 1;
+    tail_ptr = qam_data + N_FFT - 1;
 
-	for(i=0; i<N_QAM; i++)
-	{
-		// reset real and imag parts
-		qam_r = 0;
-		qam_i = 0;
+    for(i=0; i<N_QAM; i++)
+    {
+        // reset real and imag parts
+        qam_r = 0;
+        qam_i = 0;
 
-		// separate the real and imag bits and convert to decimal for gray coding
+        // separate the real and imag bits and convert to decimal for gray coding
         // e.g. 16QAM Binary - 1011, Real (first half) = 2(10), Imag (second half) = 3(11)
         // Gray Mapping: Real = (2->3), Imag = (3->2), Signal Conversion = (2*3-3) - (2*2-3)j = 3-1j
-		for (j=1; j<=N_BITS/2; j++){
-			qam_r |= ( (*(bin_data + N_BITS/2 - j) ) << (j-1) );
-			qam_i |= ( (*(bin_data + N_BITS - j) ) << (j-1) );
-		}
+        for (j=1; j<=N_BITS/2; j++){
+            qam_r |= ( (*(bin_data + N_BITS/2 - j) ) << (j-1) );
+            qam_i |= ( (*(bin_data + N_BITS - j) ) << (j-1) );
+        }
+        temp.r =  (2*gray_map[qam_r] -qam_limit)*norm_const;
+        temp.i = -(2*gray_map[qam_i] -qam_limit)*norm_const;
 
-		temp.r =  (2*gray_map[qam_r] -qam_limit)*norm_const;
-		temp.i = -(2*gray_map[qam_i] -qam_limit)*norm_const;
-
-//        fprintf(stdout,"TX: QAM symbol for bin value %d%d%d%d is %f+%fj\n", *(bin_data), *(bin_data+1), *(bin_data+2), *(bin_data+3), temp.r, temp.i);
-
+	// fprintf(stdout,"TX: QAM symbol for bin value %d%d%d%d is %f+%fj\n", *(bin_data), *(bin_data+1), *(bin_data+2), *(bin_data+3), temp.r, temp.i);
         // advance the bin pointer to next symbol
-		bin_data += N_BITS;
+        bin_data += N_BITS;
 
-		// write qam data with hermitian symmetry: head_ptr++ = a+bj, tail_ptr-- = a-bj
+        // write qam data with hermitian symmetry: head_ptr++ = a+bj, tail_ptr-- = a-bj
         if(is_sync_sym){
         // sync symbols only used odd data subcarriers
             (head_ptr)->r = temp.r;
@@ -78,27 +76,23 @@ void qam_mod(complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_sym){
             i++;
         }
         else {
-        // data symbols use all data subcarriers (except DC)
-    		(head_ptr)->r = temp.r;
-    		(head_ptr++)->i = temp.i;
-    		(tail_ptr)->r = temp.r;
-    		(tail_ptr--)->i = -temp.i;
-        }
-	}
+            // data symbols use all data subcarriers (except DC)
+    	    (head_ptr)->r = temp.r;
+            (head_ptr++)->i = temp.i;
+            (tail_ptr)->r = temp.r; 
+            (tail_ptr--)->i = -temp.i;
+       }
+   }
 }
 
 void ofdm_mod(real_t *ofdm_tx_cp, uint8_t *bin_tx) {
 
     // get the first ofdm symbol pointer without cp
-    real_t *ofdm_tx = ofdm_tx_cp + N_CP_DATA*OSF + SYNC_SYM_LEN;
+    real_t *ofdm_tx = ofdm_tx_cp + N_CP_DATA*OSF;
     // pointers for ifft input and output buffers
     complex_t *ifft_out = ifft_out_buff, *ifft_in = ifft_in_buff;
     // fft state config parameter allocation
     kiss_fft_cfg ifft_cfg = kiss_fft_alloc( N_FFT, TRUE, NULL, NULL );
-
-    // insert sync symbol
-    for(int j=0; j<SYNC_SYM_LEN; j++)
-        *(ofdm_tx_cp++) = sync_sym[j];
 
     // insert data symbols
     for(int j=0; j<N_SYM; j++){
@@ -113,52 +107,49 @@ void ofdm_mod(real_t *ofdm_tx_cp, uint8_t *bin_tx) {
             // oversampling the output
             for( int k=0; k<OSF; k++){
             #ifdef DCO_OFDM
-					*ofdm_tx++ = ifft_out->r;
-
+                *ofdm_tx++ = ifft_out->r;
             #elif defined(FLIP_OFDM)
                 // flip ofdm +ve and -ve symbol separation
                 if (ifft_out->r < 0.0)
-					*(ofdm_tx + DATA_SYM_LEN) = -(ifft_out->r);
-				else
-					*ofdm_tx++ = ifft_out->r;
+                    *(ofdm_tx + DATA_SYM_LEN) = -(ifft_out->r);
+                else
+                    *ofdm_tx++ = ifft_out->r;
             #endif
-			}
+            }
             // advance the buffer pointer
-    		ifft_out++;
-		}
-
-		// retreive cp location
-		ofdm_tx -= (N_CP_DATA*OSF);
-
-		// add cp to both +ve and -ve ofdm symbols
-		for(int i=0; i<(N_CP_DATA*OSF); i++){
+            ifft_out++;
+        }
+        // retreive cp location
+        ofdm_tx -= (N_CP_DATA*OSF);
+        // add cp to both +ve and -ve ofdm symbols
+	for(int i=0; i<(N_CP_DATA*OSF); i++){
         #ifdef FLIP_OFDM
-			*(ofdm_tx_cp + DATA_SYM_LEN) = *(ofdm_tx + DATA_SYM_LEN);
-			*ofdm_tx_cp++ = *ofdm_tx++;
+            *(ofdm_tx_cp + DATA_SYM_LEN) = *(ofdm_tx + DATA_SYM_LEN);
+            *ofdm_tx_cp++ = *ofdm_tx++;
         #elif defined(DCO_OFDM)
-			*ofdm_tx_cp++ = *ofdm_tx++;
+            *ofdm_tx_cp++ = *ofdm_tx++;
         #endif
-	    }
+        }
 
         #ifdef DCO_OFDM
-		// advance the sig buffer pointer
-		ofdm_tx_cp = ofdm_tx;
-		// get sig buffer pointer with cp
-		ofdm_tx = ofdm_tx_cp + N_CP_DATA*OSF;
+        // advance the sig buffer pointer
+        ofdm_tx_cp = ofdm_tx;
+        // get sig buffer pointer with cp
+        ofdm_tx = ofdm_tx_cp + N_CP_DATA*OSF;
 
         #elif defined(FLIP_OFDM)
-		// advance the sig buffer pointer
-		ofdm_tx_cp = ofdm_tx + DATA_SYM_LEN;
-		// get sig buffer pointer with cp
-		ofdm_tx = ofdm_tx_cp + N_CP*OSF + DATA_SYM_LEN;
+        // advance the sig buffer pointer
+        ofdm_tx_cp = ofdm_tx + DATA_SYM_LEN;
+        // get sig buffer pointer with cp
+        ofdm_tx = ofdm_tx_cp + N_CP*OSF + DATA_SYM_LEN;
         #endif
 
-		// get bin data pointer for next symbol
-		bin_tx += (N_QAM*N_BITS);
-		// Reinitialize IFFT output buffer
-		ifft_out = ifft_out_buff;
-	}
-	kiss_fft_free(ifft_cfg);
+        // get bin data pointer for next symbol
+        bin_tx += (N_QAM*N_BITS);
+        // Reinitialize IFFT output buffer
+        ifft_out = ifft_out_buff;
+    }
+    kiss_fft_free(ifft_cfg);
 }
 
 void generate_ofdm_sync(){
@@ -215,37 +206,41 @@ void generate_ofdm_sync(){
 
 int main(int argc, char **argv){
 
-	if(rp_Init() != RP_OK)
-		printf("Initialization Failed");
+    if(rp_Init() != RP_OK)
+        printf("Initialization Failed");
 
-	uint64_t start = 0, end=0;
-	real_t freq = 125e6/(16384*64);
-	uint32_t period = round(1e6/freq), frm_num, i, pos;
+    uint64_t start = 0, end=0;
+    real_t freq = 125e6/(16384*64);
+    uint32_t period = round(1e6/freq), frm_num, i, pos;
     real_t tx_sig_ptr[ADC_BUFFER_SIZE]={0.0};
     uint8_t tx_bin_ptr[N_SYM*N_QAM*N_BITS]={0};
     static volatile int32_t* dac_add;
 
     // get the DAC hardware address
     dac_add = (volatile int32_t*)rp_GenGetAdd(RP_CH_2);
-	fprintf(stdout,"TX: Entered, total bits =%d, DAC Address = %p\n", N_BITS*N_QAM*N_SYM, dac_add);
+    fprintf(stdout,"TX: Entered, total bits =%d, DAC Address = %p\n", N_BITS*N_QAM*N_SYM, dac_add);
     // reset the tx signal buffer
     memset(tx_sig_ptr, 0, ADC_BUFFER_SIZE*(sizeof(real_t)));
-	// DAC Output Settings
+    // DAC Output Settings
     rp_GenWaveform(RP_CH_2, RP_WAVEFORM_ARBITRARY);
     // set the maximum amplitude of the signal
     rp_GenAmp(RP_CH_2, 1);
-	// 1.9Msps frequency (16384 samples) per period
+    // 1.9Msps frequency (16384 samples) per period
     rp_GenFreq(RP_CH_2, freq);
-	// Continuous waveform burst mode
+    // Continuous waveform burst mode
     rp_GenMode(RP_CH_2, RP_GEN_MODE_BURST);
-	// Single waveform per burst
+    // Single waveform per burst
     rp_GenBurstCount(RP_CH_2, 1);
-	// No Repetition of Burst
+    // No Repetition of Burst
     rp_GenBurstRepetitions(RP_CH_2, 1);
-	// Waveform time period in micro seconds (16384/1.9Msps)
+    // Waveform time period in micro seconds (16384/1.9Msps)
     rp_GenBurstPeriod(RP_CH_2, period);
+
     // initialize ofdm sync sequence
     generate_ofdm_sync();
+    // insert sync sequence at the start of the tx buffer(same for all frames)
+    for(i=0; i<SYNC_SYM_LEN; i++)
+        tx_sig_ptr[i] = sync_sym[i];
 
     start = GetTimeStamp();
 	for(frm_num=1; frm_num<=N_FRAMES; frm_num++){
@@ -255,9 +250,9 @@ int main(int argc, char **argv){
         for(i=0; i<FRM_NUM_BITS; i++)
             tx_bin_ptr[i] = ((frm_num>>i)&1);
         // write the prbs in the binary buffer
-		pattern_LFSR_byte(PRBS7, tx_bin_ptr+FRM_NUM_BITS, N_SYM*N_QAM*N_BITS-FRM_NUM_BITS);
+        pattern_LFSR_byte(PRBS7, tx_bin_ptr+FRM_NUM_BITS, N_SYM*N_QAM*N_BITS-FRM_NUM_BITS);
         // modulate the binary data to generate OFDM signal
-		ofdm_mod(tx_sig_ptr, tx_bin_ptr);
+        ofdm_mod(tx_sig_ptr+SYNC_SYM_LEN, tx_bin_ptr);
         // Write the signal samples into the DAC Buffer
         for(i=0; i<ADC_BUFFER_SIZE;){
             // get the update read pointer position
@@ -269,21 +264,21 @@ int main(int argc, char **argv){
                 dac_add[i] = ((int32_t)(tx_sig_ptr[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_ptr[i]>0)-1)) & (MAX_COUNT-1));
         }
         // enable the output for current frame
-		rp_GenOutEnable(RP_CH_2);
+        rp_GenOutEnable(RP_CH_2);
         // publish the frame number
-		printf("TX: Transmitting Frame Num = %d\n",frm_num);
+        printf("TX: Transmitting Frame Num = %d\n",frm_num);
 	}
     // wait for the last frame
-	usleep(period);
+    usleep(period);
     // calculate total transmission time
-   	end = GetTimeStamp()-start;
+    end = GetTimeStamp()-start;
     // publish the transmitted frames and total time
-	fprintf(stdout,"TX: Transmitted %d Frames in %lf ms\n", N_FRAMES, (double)end/1000);
+    fprintf(stdout,"TX: Transmitted %d Frames in %lf ms\n", N_FRAMES, (double)end/1000);
     // disable the DAC
-	rp_GenOutDisable(RP_CH_2);
+    rp_GenOutDisable(RP_CH_2);
 
-//  Releasing resources
-	rp_Release();
-	fprintf(stdout,"TX: Transmission Completed, Exiting TX.\n");
+    // Releasing resources
+    rp_Release();
+    fprintf(stdout,"TX: Transmission Completed, Exiting TX.\n");
     return 0;
 }
