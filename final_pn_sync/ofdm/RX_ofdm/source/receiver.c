@@ -158,11 +158,11 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
     // constants: Max sync error = pre introduced synchronization error, n_cp_rem = part of cp that is removed
     const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
-    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.75*(N_FFT*POST_DSF/AMP_ADJ/2);
+    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.65*(N_FFT*POST_DSF/AMP_ADJ/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
-    static real_t max_of_min = 0.0, auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0, cros_corr_s=0.0, auto_corr_s=0.0;
+    static real_t max_of_min = 0.0, auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0;
     // base index of receive data, mid index (base + corr_len), end index (base + 2*corr_len), default sync error (depends on the range of coefficients over which maxima is found)
     uint32_t idx1=0, idx2=0, idx3=0, demod_sym=0, sync_err = N_FFT/4;
     // double ended queue to implement continuous window minimum using double sorted set
@@ -221,9 +221,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                         max_of_min = window.base_ptr[window.front].value;
                         // for current index, algorithm calculates window minimum for the index one window behind
                         sync_idx = idx1 - (win_len*PRE_DSF);
-                        // also save the auto and cross correlation at sync point
-                        auto_corr_s = auto_corr;
-                        cros_corr_s = cros_corr;
                     }else if (window.base_ptr[window.front].value < 0.6*max_of_min){
                         frm_count++;
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
@@ -232,7 +229,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                         samp_remng += (idx1 - sync_idx);
                         fprintf(stdout,"RX: Receiving Frame number = %d \n", frm_count);
                         fprintf(trace_fp,"RX: Sync completed, corr_count = %d, remaining samples = %d, SYNC_IDX[%d] = %d\n", corr_count, samp_remng, frm_count, sync_idx);
-                        fprintf(trace_fp,"RX: Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
                         break;
                     }
                 }
@@ -247,8 +243,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 idx3 = (idx3 + PRE_DSF);
             }
             if(!sync_done){
-                fprintf(trace_fp,"RX: Sync not completed, corr_count = %d, remng samples = %d, stop_demod = %d\n", corr_count, samp_remng, idx1);
-                fprintf(trace_fp,"RX: Sync not completed, max of min = %f, auto corr = %f, cross_corr=%f\n", corr_fact, auto_corr, cros_corr);
+                fprintf(trace_fp,"RX: Sync not completed, corr_count = %d, remng samples = %d, auto_corr=%f, cros_Corr = %f\n", corr_count, samp_remng, auto_corr, cros_corr);
             }
         }
     }
