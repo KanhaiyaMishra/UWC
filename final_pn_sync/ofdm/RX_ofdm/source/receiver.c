@@ -323,13 +323,13 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 
 	        for(int j=0; j<demod_sym; j++){
                 // downsample the received data
-		    for( int i=0; i< N_FFT; i++){
+                for( int i=0; i< N_FFT; i++){
 	    	    #ifdef FLIP
                         fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF) ] - rx_sig_buff[ (demod_idx + DATA_SYM_LEN + i*OSF) ];
 	    	    #elif defined(DCO)
                         fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF) ];
-		    #endif
-		    }
+                #endif
+                }
 
                 // Compute FFT and demdoulate QAM data into binary buffer
                 kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
@@ -380,6 +380,7 @@ int main(int argc, char** argv){
     uint32_t demod_idx = 0, recv_idx = 0, end_idx = (9+N_FRAMES)*ADC_BUFFER_SIZE;
     // timing variables
     uint64_t start=0, end1=0, end2 = 0;
+    int32_t temp;
     // get the DAC hardware address
     static volatile int32_t* adc_add = NULL;
     adc_add = (volatile int32_t*)rp_AcqGetAdd(RP_CH_2);
@@ -428,7 +429,6 @@ int main(int argc, char** argv){
 
         // acquire the data into rx signal buffer from ADC buffer either using library function or using hardware address(much faster)
 //	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, (rx_sig_buff+recv_idx) );
-        int32_t temp;
         for (int i =0; i<samp_recvd; i++){
             temp = (double) (adc_add[(prev_pos+i)%ADC_BUFFER_SIZE]);
             rx_sig_buff[recv_idx+i] = (temp>8191)?(temp-(1<<14))/((double)(1<<13)):temp/((double)(1<<13)) + DC_ERROR;
