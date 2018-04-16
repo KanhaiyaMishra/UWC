@@ -15,6 +15,7 @@
 #include "deque.h"
 #include "kiss_fft.h"
 #include "redpitaya/rp.h"
+#include <sys/stat.h>
 
 // amplitude adjustment done at the transmitter side
 #define AMP_ADJ 20
@@ -158,11 +159,11 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
     // constants: Max sync error = pre introduced synchronization error, n_cp_rem = part of cp that is removed
     const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
-    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.75*(N_FFT*POST_DSF/AMP_ADJ/2);
+    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.5*(N_FFT*POST_DSF/AMP_ADJ/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
-    static real_t max_of_min = 0.0, auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0, cros_corr_s=0.0, auto_corr_s=0.0;
+    static real_t max_of_min = 0.0, auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0;
     // base index of receive data, mid index (base + corr_len), end index (base + 2*corr_len), default sync error (depends on the range of coefficients over which maxima is found)
     uint32_t idx1=0, idx2=0, idx3=0, demod_sym=0, sync_err = N_FFT/4;
     // double ended queue to implement continuous window minimum using double sorted set
@@ -206,7 +207,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             for( ;samp_remng > OSF*N_FFT; samp_remng-=PRE_DSF) {
                 // auto correlation threshold (diff noise from pilot), corr fact threshold (reduces uncessary computation when pilot is yet present)
                 // start computing window minimum once thresholds are crossed
-                if( auto_corr > auto_corr_th && corr_fact >0.3){
+                if( auto_corr > auto_corr_th){
                     // remove all elements from rear having higher corr factor than current corr_fact (they will never be the window minimum in future)
                     while( !empty(&window) && window.base_ptr[window.rear].value >= corr_fact)
                         dequeueR(&window);
@@ -221,9 +222,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                         max_of_min = window.base_ptr[window.front].value;
                         // for current index, algorithm calculates window minimum for the index one window behind
                         sync_idx = idx1 - (win_len*PRE_DSF);
-                        // also save the auto and cross correlation at sync point
-                        auto_corr_s = auto_corr;
-                        cros_corr_s = cros_corr;
                     }else if (window.base_ptr[window.front].value < 0.6*max_of_min){
                         frm_count++;
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
@@ -232,7 +230,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                         samp_remng += (idx1 - sync_idx);
                         fprintf(stdout,"RX: Receiving Frame number = %d \n", frm_count);
                         fprintf(trace_fp,"RX: Sync completed, corr_count = %d, remaining samples = %d, SYNC_IDX[%d] = %d\n", corr_count, samp_remng, frm_count, sync_idx);
-                        fprintf(trace_fp,"RX: Sync completed, max of min = %f, auto corr = %f, cross_corr=%f\n", max_of_min, auto_corr_s, cros_corr_s);
                         break;
                     }
                 }
@@ -247,8 +244,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 idx3 = (idx3 + PRE_DSF);
             }
             if(!sync_done){
-                fprintf(trace_fp,"RX: Sync not completed, corr_count = %d, remng samples = %d, stop_demod = %d\n", corr_count, samp_remng, idx1);
-                fprintf(trace_fp,"RX: Sync not completed, max of min = %f, auto corr = %f, cross_corr=%f\n", corr_fact, auto_corr, cros_corr);
+                fprintf(trace_fp,"RX: Sync not completed, corr_count = %d, remng samples = %d, auto_corr=%f, cros_Corr = %f\n", corr_count, samp_remng, auto_corr, cros_corr);
             }
         }
     }
@@ -327,13 +323,13 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 
 	        for(int j=0; j<demod_sym; j++){
                 // downsample the received data
-		    for( int i=0; i< N_FFT; i++){
+                for( int i=0; i< N_FFT; i++){
 	    	    #ifdef FLIP
                         fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF) ] - rx_sig_buff[ (demod_idx + DATA_SYM_LEN + i*OSF) ];
 	    	    #elif defined(DCO)
                         fft_in[i].r = rx_sig_buff[ (demod_idx + i*OSF) ];
-		    #endif
-		    }
+                #endif
+                }
 
                 // Compute FFT and demdoulate QAM data into binary buffer
                 kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
@@ -384,24 +380,29 @@ int main(int argc, char** argv){
     uint32_t demod_idx = 0, recv_idx = 0, end_idx = (9+N_FRAMES)*ADC_BUFFER_SIZE;
     // timing variables
     uint64_t start=0, end1=0, end2 = 0;
+    int32_t temp;
     // get the DAC hardware address
     static volatile int32_t* adc_add = NULL;
     adc_add = (volatile int32_t*)rp_AcqGetAdd(RP_CH_2);
-    FILE *bin_fp;
+    FILE *bin_fp, *sig_fp;
     time_t now = time(NULL);
-    char trace_file[255], bin_file[255];
+    char log_dir[255], trace_file[255], bin_file[255], sig_file[255];
 
-    strftime(trace_file, 255,"../log/TRACE_RX_%Y-%m-%d_%H_%M_%S.txt",gmtime(&now));
-    strftime(bin_file, 255,"../log/BINARY_RX_%Y-%m-%d_%H_%M_%S.txt",gmtime(&now));
+    strftime(log_dir, 255,"../log/%Y_%m_%d_%H_%M_%S",gmtime(&now));
+    mkdir(log_dir, 0777);
+    strftime(trace_file, 255,"../log/%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
+    strftime(bin_file, 255,"../log/%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
+    strftime(sig_file, 255,"../log/%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
     trace_fp = fopen(trace_file,"w+");
     bin_fp = fopen(bin_file,"w+");
+    sig_fp = fopen(sig_file,"w+");
 
     fprintf(trace_fp, "RX: Entered, Address = %p\n", adc_add);
     // generate the pilots for synchronization error correction exactly same as in Transmit Program
 
     generate_ofdm_sync();
     // wait till transmission is started
-    usleep(104000);
+    usleep(105000);
     // reset the ADC
     rp_AcqReset();
     // set the ADC sample rate (125e6/decimation)
@@ -428,7 +429,6 @@ int main(int argc, char** argv){
 
         // acquire the data into rx signal buffer from ADC buffer either using library function or using hardware address(much faster)
 //	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, (rx_sig_buff+recv_idx) );
-        int32_t temp;
         for (int i =0; i<samp_recvd; i++){
             temp = (double) (adc_add[(prev_pos+i)%ADC_BUFFER_SIZE]);
             rx_sig_buff[recv_idx+i] = (temp>8191)?(temp-(1<<14))/((double)(1<<13)):temp/((double)(1<<13)) + DC_ERROR;
@@ -487,10 +487,10 @@ int main(int argc, char** argv){
             valid_frms +=1;
             missd_frms +=frm_diff;
             ber += (double)error_count[i];
-            fprintf(trace_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
+            fprintf(stdout,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
             invalid_frms++;
-            fprintf(trace_fp,"RX: Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
+            fprintf(stdout,"RX: Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
         }
     }
     ber = ber/(valid_frms*data_bits);
@@ -498,10 +498,17 @@ int main(int argc, char** argv){
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
     // save demodulated data
-    for(i = 0; i <recvd_frms*N_SYM*N_QAM*N_BITS; i++){
+    for(i = 0; i <recvd_frms*bits_per_frame; i++){
         fprintf(bin_fp," %d \n", rx_bin_buff[i]);
     }
+    if(missd_frms>0){
+        // save demodulated data
+        for(i = 0; i <recv_idx; i++){
+            fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+        }
+    }
 
+    fclose(sig_fp);
     fclose(bin_fp);
     fclose(trace_fp);
 
