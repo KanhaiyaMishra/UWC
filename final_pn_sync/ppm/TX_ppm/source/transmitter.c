@@ -13,7 +13,6 @@
 
 uint8_t pn_seq_buff[PN_SEQ_LEN];
 uint32_t n_sym, corr_max=0;
-real_t pulse[16] = 0.
 
 uint64_t GetTimeStamp(){
     struct timeval tv;
@@ -51,8 +50,8 @@ void ppm_mod(float *ppm_tx, uint8_t *bin_tx){
         for( j=0; j<N_BITS; j++)
     	    pos |= *(bin_tx+j)<<j;
 
-        for( j=-4; j<OSF+4; j++)
-            *(ppm_tx + pos*OSF + j) = pulse[j+4];
+        for( j=0; j<OSF; j++)
+            *(ppm_tx + pos*OSF + j) = PPM_AMP;
 
         ppm_tx += N_SAMP_SYM;
         bin_tx += N_BITS;
@@ -87,20 +86,19 @@ int main(int argc, char **argv){
 
     // set DAC output waveform parameters
     rp_GenWaveform(RP_CH_2, RP_WAVEFORM_ARBITRARY);
-    rp_GenOffset(RP_CH_2, 0.0);
-	rp_GenAmp(RP_CH_2, PPM_AMP);
+    rp_GenOffset(RP_CH_2, 0);
+	rp_GenAmp(RP_CH_2, 1.0);
     rp_GenFreq(RP_CH_2, freq);
     rp_GenMode(RP_CH_2, RP_GEN_MODE_BURST);
     rp_GenBurstCount(RP_CH_2, 1);
     rp_GenBurstRepetitions(RP_CH_2, 1);
     rp_GenBurstPeriod(RP_CH_2, period);
 
-//	rp_GenArbWaveform(RP_CH_2, tx_sig_ptr, ADC_BUFFER_SIZE);
 
     // Get cpu clock
     start = GetTimeStamp();
     // start continuous transmission with single burst waveforms
-	for(frm_num=0; frm_num<N_FRAMES; frm_num++){
+	for(frm_num=1; frm_num<=N_FRAMES; frm_num++){
         // read the buffer pointer once for updating from zero
         rp_GenGetReadPointer(&pos, RP_CH_2);
         // Initialize the signal buffer
@@ -117,8 +115,9 @@ int main(int argc, char **argv){
             rp_GenGetReadPointer(&pos, RP_CH_2);
             pos = ((pos==0)?(ADC_BUFFER_SIZE):pos);
             for(;i<pos;i++)
-                dac_add[i] = ( (int32_t)(tx_sig_ptr[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_ptr[i]>0)-1)) & (MAX_COUNT-1));
+                dac_add[i] =  ((int)(tx_sig_ptr[i]*MAX_COUNT/2.0f + 0.5) & 0x3FFF);
         }
+//    	rp_GenArbWaveform(RP_CH_2, tx_sig_ptr, ADC_BUFFER_SIZE);
         // Transmit the current frame and publish info
         rp_GenOutEnable(RP_CH_2);
         fprintf(stdout,"TX: Transmitting Frame Num = %d\n",frm_num);

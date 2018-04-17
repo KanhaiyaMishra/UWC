@@ -1,33 +1,14 @@
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
+#ifndef __PRBS_H
+#define __PRBS_H
 
-/* 
- * File:   prbs.h
- * Author: mishr
- *
- * Created on 13 September, 2017, 1:23 AM
- */
-
-#ifndef PRBS_H
-#define PRBS_H
 #include <inttypes.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+extern uint8_t taps[7][2];
 
 typedef enum{
-PRBS4, PRBS7, PRBS9, PRBS11, PRBS15, PRBS20, PRBS23, PRBS31}order_t;
-void prbs_gen_reset();
-void prbs_gen_bit(order_t prbs_order, uint32_t *bitsequence, uint32_t n_bits);
-void prbs_gen_byte(order_t prbs_order, uint8_t *bitsequence, uint32_t n_bits);
+PRBS7, PRBS9, PRBS11, PRBS15, PRBS20, PRBS23, PRBS31}order_t;
 
-#ifdef __cplusplus
-}
+void pattern_LFSR_bit(order_t prbs_order, uint32_t *bitsequence, uint32_t n_bits);
+void pattern_LFSR_byte(order_t prbs_order, uint8_t *bitsequence, uint32_t n_bits);
+
 #endif
-
-#endif /* PRBS_H */
-

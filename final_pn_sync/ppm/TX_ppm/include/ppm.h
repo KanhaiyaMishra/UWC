@@ -24,7 +24,8 @@ extern "C" {
 #endif
 #define PPM 4
 #define OSF 8
-#define PPM_AMP 0.9
+#define PPM_AMP 0.9999
+// Samples per symbol = PPM*OSF
 #define N_SAMP_SYM 32
 #define FRM_NUM_BITS 16
 
