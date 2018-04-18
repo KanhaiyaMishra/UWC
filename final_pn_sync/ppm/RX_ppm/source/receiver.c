@@ -13,13 +13,13 @@
 #include "prbs.h"
 
 #define N_FRAMES 1000
-#define MARGIN 10
+#define RX_BUFF_SIZE (1100*ADC_BUFFER_SIZE)
 
 FILE *trace_fp = NULL;
 // Number of bits to be received per frame
 uint32_t n_sym = (ADC_BUFFER_SIZE/OSF-PN_SEQ_LEN-1)/PPM;
 // rx signal buffer to store data from ADC hardware buffer
-float rx_sig_buff[(N_FRAMES+MARGIN)*ADC_BUFFER_SIZE] = {0.0};
+float rx_sig_buff[RX_BUFF_SIZE] = {0.0};
 // known sync sequence
 uint8_t pn_seq_buff[PN_SEQ_LEN];
 // symbols per frame and max correlation of sync sequence
@@ -27,10 +27,10 @@ uint32_t corr_max;
 // indices holding ones in the pn sequence
 uint32_t indices[64];
 
-uint64_t GetTimeStamp(){
+double GetTimeStamp(){
     struct timeval tv;
     gettimeofday(&tv,NULL);
-    return tv.tv_sec*(uint64_t)1000000+tv.tv_usec;
+    return (tv.tv_sec*(uint64_t)1000000+tv.tv_usec);
 }
 
 // intilialize the modulator
@@ -57,6 +57,7 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
     //threshold setting
     float rx_th = PPM_AMP/2, max, temp;
 
+    fprintf(trace_fp,"RX: Sync/Demod Started, Demod Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
     // synchronize with data to detect frame starting
     if (!sync_done){
         sym_count = 0;
@@ -64,17 +65,17 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
         while( samp_remng >= (PN_SEQ_LEN+1)*OSF ){
             pn_corr = 0;
             for(i=0; i<corr_max; i++){
-                if(rx_sig_buff[demod_idx + OSF*indices[i]] > rx_th )
+                if(rx_sig_buff[(demod_idx + OSF*indices[i])%RX_BUFF_SIZE] > rx_th )
                     pn_corr++;
             }
             // set sync_done flag if correlation reaches maximum
-            if(pn_corr >= 0.85*corr_max){
+            if(pn_corr == corr_max){
                 frm_count++;
 			    sync_done = 1;
-                demod_idx += (PN_SEQ_LEN + 1)*OSF;
+                demod_idx = (demod_idx+(PN_SEQ_LEN + 1)*OSF)%RX_BUFF_SIZE;
                 samp_remng -= (PN_SEQ_LEN + 1)*OSF;
                 fprintf(stdout,"RX: Receiving Frame number = %d \n", frm_count);
-                fprintf(trace_fp,"RX: Demodulation not completed, Sync completed, sync_idx = %d\n", demod_idx);
+                fprintf(trace_fp,"RX: Demodulation not completed, Sync completed, sync_idx[%d] = %d\n", frm_count, demod_idx);
                 break;
 		    }
             demod_idx++;
@@ -82,7 +83,7 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
         }
         if (!sync_done){
             // if sync is not done, exit the demod function and return the num of un-processed samples
-            fprintf(trace_fp,"RX: Demodulation completed, Sync not completed, Remaining %d Samples\n", samp_remng);
+            fprintf(trace_fp,"RX: Demodulation completed, Sync not completed, Stop Index = %d, Remaining %d Samples\n", demod_idx, samp_remng);
         }
     }
     // demodulate the data symbols
@@ -94,21 +95,22 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
         } else{
             demod_sym = n_sym - sym_count;
             sync_done = 0;
+            fprintf(trace_fp,"RX: Demodulation Completed for Frame Num %d, Symbol Count = %d\n", frm_count, sym_count+demod_sym);
         }
         // demodulate ppm data symbols
         for(i=0; i<demod_sym; i++ ){
             // reset the pulse position to be zero
 		    pos = 0;
-            max = rx_sig_buff[demod_idx+OSF/2];
-            demod_idx += OSF;
+            max = rx_sig_buff[demod_idx];
+            demod_idx = (demod_idx+OSF)%RX_BUFF_SIZE;
             // detect the maximum by comparing the pulse positions
             for( j=1; j< PPM; j++){
-                temp = rx_sig_buff[demod_idx+OSF/2];
+                temp = rx_sig_buff[demod_idx];
                 if( temp > max ){
                     pos = j;
                     max = temp;
 			    }
-                demod_idx += OSF;
+                demod_idx = (demod_idx+OSF)%RX_BUFF_SIZE;
             }
             // convert the position to binary value and write into the binary buffer
             for( j=0; j<N_BITS; j++)
@@ -117,7 +119,6 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
         // get the recevied bits, aggregate sym count and rem samples to be carried forward
         sym_count += demod_sym;
         samp_remng -= demod_sym*N_SAMP_SYM;
-        fprintf(trace_fp,"RX: Demodulation Completed, Symbol Count = %d, Received %d bits, Remaining %d Samples\n", sym_count, *bits_received, samp_remng);
     }
     *bits_received = N_BITS*demod_sym;
     return samp_remng;
@@ -139,7 +140,7 @@ int main(int argc, char** argv){
     // current location of pointer in binary buffer
 	uint8_t *rx_bin_ptr = rx_bin_buff;
     // location receive pointer, demod pointer in rx signal buffer
-    uint32_t demod_idx = 0, recv_idx = 0, end_idx = (MARGIN+N_FRAMES-1)*ADC_BUFFER_SIZE;
+    uint32_t demod_idx = 0, recv_idx = 0;
     // get the DAC hardware address
     static volatile int32_t* adc_add = NULL;
     adc_add = (volatile int32_t*)rp_AcqGetAdd(RP_CH_2);
@@ -147,7 +148,7 @@ int main(int argc, char** argv){
 
     ppm_init();
     // timing variables
-    uint64_t start=0, end1=0, end2 = 0;;
+    uint64_t start1=0, start=0, end1=0, end2 = 0;
 
     FILE *bin_fp, *sig_fp;
     time_t now = time(NULL);
@@ -180,6 +181,7 @@ int main(int argc, char** argv){
     // small wait till ADC has acquired some data
     usleep(10000);
 
+    start1 = GetTimeStamp();
     // continue recieving untill receive signal buffer gets filled
 	while( TRUE ){
         // get the cpu clock at the start
@@ -192,29 +194,28 @@ int main(int argc, char** argv){
 //	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, rx_sig_buff+recv_idx);
         for (i =0; i<samp_recvd; i++){
             temp = (double) (adc_add[(prev_pos+i)%ADC_BUFFER_SIZE]);
-            rx_sig_buff[recv_idx+i] = (temp>8191)?(temp-(1<<14))/((double)(1<<13)):temp/((double)(1<<13));
+            rx_sig_buff[(recv_idx+i)%RX_BUFF_SIZE] = (temp>8191)?(temp-(1<<14))/((double)(1<<13)):temp/((double)(1<<13));
         }
-		fprintf(trace_fp,"RX: Read out samples = %d, Current pos = %d, Prev_pos = %d\n", samp_recvd, curr_pos, prev_pos);
+		fprintf(trace_fp,"RX: Recv Index = %d, Current pos = %d, Prev_pos = %d\n", recv_idx, curr_pos, prev_pos);
         // calculate the acquisition time
         end1 = GetTimeStamp() - start;
-
         // demodulate the receive signal and save the remaining unprocessed samples
 		samp_remng = ppm_demod(rx_bin_ptr, demod_idx, samp_recvd+samp_remng, &bits_recvd);
         // update the ADC pointer position
 		prev_pos = curr_pos;
         // advance the signal buffer pointer
-        recv_idx += samp_recvd;
+        recv_idx = (recv_idx+samp_recvd)%RX_BUFF_SIZE;
         // advance the demod pointer in the buffer
-        demod_idx = recv_idx - samp_remng;
+        demod_idx = (recv_idx - samp_remng)%RX_BUFF_SIZE;
         // advance the rx binary buffer
 		rx_bin_ptr += bits_recvd;
-
-        if ( recv_idx > end_idx || rx_bin_ptr > rx_bin_end)
+        // check if all the frames are received
+        if(rx_bin_ptr > rx_bin_end || (start-start1)>N_FRAMES*20000)
 			break;
 
         // calculate the data processing time
         end2 = GetTimeStamp() - end1 - start;
-        fprintf(trace_fp,"RX: Read time = %lf, Process time = %lf\n", (double)end1/1000, (double)end2/1000);
+        fprintf(trace_fp,"RX: Read time = %lf, Process time = %lf, Received Bits = %d, Remaining Samples = %d\n", (double)end1/1000, (double)end2/1000, bits_recvd, samp_remng);
 	}
 
     // Calculate the number of frames received
@@ -236,7 +237,7 @@ int main(int argc, char** argv){
 
         frm_diff = rx_frm_num-tx_frm_num;
 
-        if ( frm_diff <= 5 && frm_diff >= 0 ){
+        if ( frm_diff <= 10 && frm_diff >= 0 ){
             while(rx_frm_num >= tx_frm_num) {
                 error_count[i] = 0;
                 for(j=0; j<(data_bits); j++)
@@ -246,7 +247,7 @@ int main(int argc, char** argv){
             }
             valid_frms +=1;
             missd_frms +=frm_diff;
-            ber += (double)error_count[i];
+            ber += (double)(error_count[i]*(frm_diff==0));
             fprintf(stdout,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
             invalid_frms++;
@@ -261,7 +262,7 @@ int main(int argc, char** argv){
     for(i = 0; i <recvd_frms*bits_per_frame; i++){
         fprintf(bin_fp," %d \n", rx_bin_buff[i]);
     }
-    if(missd_frms>0){
+    if(ber>0){
         // save demodulated data
         for(i = 0; i <recv_idx; i++){
             fprintf(sig_fp," %f \n", rx_sig_buff[i]);

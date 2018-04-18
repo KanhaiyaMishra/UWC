@@ -25,7 +25,7 @@ extern "C" {
 
 #define PPM 4
 #define OSF 8
-#define PPM_AMP 1.0
+#define PPM_AMP 0.9
 #define N_SAMP_SYM (PPM*OSF)
 
 #if (PPM == 4)
