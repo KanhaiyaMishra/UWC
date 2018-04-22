@@ -22,7 +22,7 @@
 // DC error of ADC
 #define DC_ERROR 0.015
 // number of frames to be received
-#define N_FRAMES 2000
+#define N_FRAMES 1000
 // constant for converting second to nano second
 #define NANO 1000000000LL
 // Duration of a frame in ms (8.39ms = exact duration)
