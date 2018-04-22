@@ -24,7 +24,8 @@ extern "C" {
 #endif
 #define PPM 4
 #define OSF 8
-#define PPM_AMP 0.9
+#define PPM_HIGH 0.9
+#define PPM_LOW 0.0
 // Samples per symbol = PPM*OSF
 #define N_SAMP_SYM 32
 #define FRM_NUM_BITS 16
@@ -46,9 +47,9 @@ extern "C" {
 #endif
 
 #define PN_SEQ_TYPE PRBS7
-#define PN_SEQ_LEN 31
+#define PN_SEQ_LEN 32
 
-uint32_t ppm_init();
+void ppm_init(float *ppm_tx);
 void ppm_mod(float *ppm_tx, uint8_t *bin_tx);
 uint32_t ppm_demod(uint8_t *bin_rx, float *ppm_rx, uint32_t size, uint32_t *bits_received);
 

@@ -25,7 +25,8 @@ extern "C" {
 
 #define PPM 4
 #define OSF 8
-#define PPM_AMP 0.9
+#define PPM_HIGH 0.9
+#define PPM_LOW 0.0
 #define N_SAMP_SYM (PPM*OSF)
 
 #if (PPM == 4)
@@ -45,7 +46,7 @@ extern "C" {
 #endif
 
 #define PN_SEQ_TYPE PRBS7
-#define PN_SEQ_LEN 31
+#define PN_SEQ_LEN 32
 #define FRM_NUM_BITS 16
 
 void ppm_init();
