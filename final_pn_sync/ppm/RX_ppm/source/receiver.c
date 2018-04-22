@@ -14,7 +14,7 @@
 
 #define DC_ERROR 0.015
 // #frames to be received
-#define N_FRAMES 10000
+#define N_FRAMES 1000
 // Frame duration (actual duration = 8.389us)
 #define FRM_DUR 9
 // recv signal buffer size (must be in powers of 2 (because of unsigned diff of indices later used in the program) )
@@ -135,6 +135,13 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
         // get the recevied bits, aggregate sym count and rem samples to be carried forward
         sym_count += demod_sym;
         samp_remng -= demod_sym*N_SAMP_SYM;
+
+        // recursive call at the end of each frame when there are enough samples remaining for synchronization and/or demodulation
+        if( sym_count==n_sym && samp_remng>=(OSF*PN_SEQ_LEN) ){
+            uint32_t new_bits = 0;
+            samp_remng = ppm_demod(bin_rx, demod_idx, samp_remng, &new_bits);
+            demod_sym += (new_bits/N_BITS);
+        }
     }
     *bits_received = N_BITS*demod_sym;
     return samp_remng;
@@ -305,7 +312,7 @@ int main(int argc, char** argv){
     }
     // calculate average BER
     ber = ber/(valid_frms*data_bits);
-    fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
+    fprintf(stdout,"RX: Received total %d valid frames with BER = %f, Zero Error Frames = %d\n", valid_frms, ber, zero_ber_frms);
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
     // save demodulated data if ber is non-zero
@@ -326,8 +333,8 @@ int main(int argc, char** argv){
     // Stop acquisition and release resources
     free(rx_bin_buff);
     rp_AcqStop();
-	rp_Release();
-	fprintf(stdout,"RX: Acquisition Comeplete, Exiting.\n");
+    rp_Release();
+    fprintf(stdout,"RX: Acquisition Comeplete, Exiting.\n");
     return 0;
 }
 
