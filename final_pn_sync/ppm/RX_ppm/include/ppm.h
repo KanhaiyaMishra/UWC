@@ -4,7 +4,7 @@
  * and open the template in the editor.
  */
 
-/* 
+/*
  * File:   ppm.h
  * Author: mishr
  *
@@ -25,7 +25,8 @@ extern "C" {
 
 #define PPM 4
 #define OSF 8
-#define PPM_AMP 0.9
+#define PPM_HIGH 0.9
+#define PPM_LOW 0.0
 #define N_SAMP_SYM (PPM*OSF)
 
 #if (PPM == 4)
@@ -45,11 +46,12 @@ extern "C" {
 #endif
 
 #define PN_SEQ_TYPE PRBS7
-#define PN_SEQ_LEN 31
+#define PN_SEQ_LEN 32
+#define FRM_NUM_BITS 16
 
-uint32_t ppm_init();
+void ppm_init();
 void ppm_mod(float *ppm_tx, uint8_t *bin_tx);
-uint32_t ppm_demod(uint8_t *bin_rx, float *ppm_rx, uint32_t size, uint32_t *bits_received);
+uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t size, uint32_t *bits_received);
 
 #ifdef __cplusplus
 }

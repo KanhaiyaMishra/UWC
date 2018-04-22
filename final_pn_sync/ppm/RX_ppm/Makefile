@@ -14,7 +14,7 @@ OBJDIR = ./obj
 # local directory for the executable output file
 BINDIR = ../bin
 # shared library path
-LIBDIR = /opt/redpitaya
+LIBDIR = /root/RedPitaya/build
 # shared library header path
 LIBINC = $(LIBDIR)/include
 # shared library ".so" (shared object) file path
