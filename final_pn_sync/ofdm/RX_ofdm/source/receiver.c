@@ -28,7 +28,7 @@
 // Duration of a frame in ms (8.39ms = exact duration)
 #define FRM_DUR 9
 // Receive signal buffer size (should be power of 2 because of unsigned diff of indices later used in the program) )
-#define RX_BUFF_SIZE (8*ADC_BUFFER_SIZE)
+#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
 // Whether or not to print traces (True only when debugging, use smaller number of frames)
 #define TRACE_PRINT FALSE
 
@@ -170,7 +170,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
     // constants: Max sync error = pre introduced synchronization error, n_cp_rem = part of cp that is removed
     const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
-    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.5*(N_FFT*POST_DSF/AMP_ADJ/2);
+    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.2*(N_FFT*POST_DSF/AMP_ADJ/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
@@ -219,7 +219,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             for( ;samp_remng > OSF*N_FFT; samp_remng-=PRE_DSF) {
                 // auto correlation threshold (diff noise from pilot), corr fact threshold (reduces uncessary computation when pilot is yet present)
                 // start computing window minimum once thresholds are crossed
-                if( auto_corr > auto_corr_th){
+                if( auto_corr > auto_corr_th && corr_fact>0.3 ){
                     // remove all elements from rear having higher corr factor than current corr_fact (they will never be the window minimum in future)
                     while( !empty(&window) && window.base_ptr[window.rear].value >= corr_fact)
                         dequeueR(&window);
@@ -418,23 +418,25 @@ int main(int argc, char** argv){
     adc_add = (volatile uint32_t*)rp_AcqGetAdd(RP_CH_2);
 
     // File pointers: Binary Data File, BER Result File
-    FILE *bin_fp, *ber_fp;
+    FILE *bin_fp, *ber_fp, *sig_fp;
     time_t now = time(NULL);
-    char log_dir[255], ber_file[255], bin_file[255];
+    char log_dir[255], ber_file[255], bin_file[255], sig_file[255];
 
-    strftime(log_dir, 255,"../log/%Y_%m_%d_%H_%M_%S",gmtime(&now));
+    strftime(log_dir, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
     mkdir(log_dir, 0777);
-    strftime(bin_file, 255,"../log/%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
-    strftime(ber_file, 255,"../log/%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
+    strftime(bin_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
+    strftime(ber_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
+    strftime(sig_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
     bin_fp = fopen(bin_file,"w+");
     ber_fp = fopen(ber_file,"w+");
+    sig_fp = fopen(sig_file,"w+");
 
     #if TRACE_PRINT
     // timing variables for checking process and receiving time (only needed when debugging)
     struct timespec t1, t2, t3;
     // log file pointer
     char trace_file[255];
-    strftime(trace_file, 255,"../log/%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
+    strftime(trace_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
     trace_fp = fopen(trace_file,"w+");
     #endif
 
@@ -552,15 +554,20 @@ int main(int argc, char** argv){
             invalid_frms++;
             fprintf(ber_fp,"RX: Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
         }
+
+        last_rx_frm = rx_frm_num;
     }
     ber = ber/(valid_frms*data_bits);
     fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
-    if(missd_frms>0){
+    if(ber>0){
         // save demodulated data
         for(i = 0; i <recvd_frms*bits_per_frame; i++){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
+        }
+        for(i = 0; i <recv_idx; i++){
+            fprintf(sig_fp," %f \n", rx_sig_buff[i]);
         }
     }
 
