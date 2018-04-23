@@ -11,7 +11,7 @@ typedef kiss_fft_scalar real_t;
 
 #define OSF 8               // over sampling factor
 #define DCO_OFDM            // OFDM Type: DCO/FLIP
-#define M_QAM  4            // QAM order
+#define M_QAM 4            // QAM order
 #define N_BITS 2            // bits per qam symbol
 #define N_FFT 64            // Total Subcarriers (FFT Size)
 #define N_DSC 52            // Data Subcarriers

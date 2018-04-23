@@ -28,14 +28,22 @@
 // Duration of a frame in ms (8.39ms = exact duration)
 #define FRM_DUR 9
 // Receive signal buffer size (should be power of 2 because of unsigned diff of indices later used in the program) )
-#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
+#define RX_BUFF_SIZE (1100*ADC_BUFFER_SIZE)
 // Whether or not to print traces (True only when debugging, use smaller number of frames)
 #define TRACE_PRINT FALSE
+#define DEBUG FALSE
 
 // timediff in miliseconds
 static double timediff_ms(struct timespec *begin, struct timespec *end){
     return (double)( (end->tv_sec - begin->tv_sec)*NANO + (end->tv_nsec - begin->tv_nsec) )/1000000;
 }
+
+#if DEBUG
+static uint32_t sync_indices[N_FRAMES+1] = {0};
+static uint32_t sync_corr[N_FRAMES+1] = {0};
+static complex_t qam_raw_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
+static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}}
+#endif
 
 // log file pointer
 FILE *trace_fp = NULL;
@@ -67,9 +75,10 @@ static inline complex_t comp_div( complex_t num, complex_t den){
 void generate_ofdm_sync(){
 
     // sync symbol uses half subcarriers as compared to data symbol
-    uint8_t *bin_data = malloc(N_QAM*N_BITS/2*sizeof(uint8_t));
+    uint8_t sync_bin[N_QAM*N_BITS/2] = {0};
+    uint8_t *bin_data = sync_bin;
     // generate binary data for sync symbols
-    pattern_LFSR_byte(PRBS7, bin_data, N_DSC/2);
+    pattern_LFSR_byte(PRBS7, bin_data, N_QAM*N_BITS/2);
 
     // qam modulate the binary data
     complex_t temp, *head_ptr, *tail_ptr;
@@ -115,7 +124,6 @@ void generate_ofdm_sync(){
         (tail_ptr--)->i = -0.0;
         i++;
     }
-
 }
 
 // QAM Demodulation function: input qam_data, output binary data
@@ -125,6 +133,11 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
     uint32_t i, j, qam_sym_r, qam_sym_i;
     real_t qam_limit = pow(2, N_BITS/2) - 1;
     real_t norm_const = sqrt( 20*(2*(M_QAM - 1)/3)*N_DSC)/N_FFT;
+
+    #if DEBUG
+    static complex_t *qam_raw_ptr=qam_raw_buff;
+    static complex_t *qam_demod_ptr=qam_demod_buff;
+    #endif
 
     for(i=0; i<N_QAM; i++)
     {
@@ -153,6 +166,15 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
         }
         bin_data += N_BITS;
         qam_data++;
+
+        #if DEBUG
+        qam_raw_ptr->r = temp.r;
+        qam_raw_ptr->i = temp.i;
+        qam_demod_ptr->r = qam_sym_r;
+        qam_demod_ptr->i = qam_sym_i;
+        qam_raw_ptr++;
+        qam_demod_ptr++;
+        #endif
     }
 }
 
@@ -229,11 +251,14 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                     while( (idx1 - window.base_ptr[window.front].position)%RX_BUFF_SIZE > (win_len*PRE_DSF) )
                         dequeueF(&window);
                     // check whether current corr_fact is the maximum window minimum and save its index
-                    if( window.base_ptr[window.front].value > max_of_min ){
+                    if( window.base_ptr[window.front].value > max_of_min && corr_count > win_len){
                         max_of_min = window.base_ptr[window.front].value;
                         // for current index, algorithm calculates window minimum for the index one window behind
                         sync_idx = (idx1 - (win_len*PRE_DSF))%RX_BUFF_SIZE;
                     }else if (window.base_ptr[window.front].value < 0.6*max_of_min){
+                        #if DEBUG
+                        sync_indices[frm_count] = sync_idx;
+                        #endif
                         frm_count++;
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
                         sync_done = 1;
@@ -300,13 +325,16 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 // Either side peak of the maxima might share almost equal power), correct sync will be to move slightly(2 samples) towards that side peak
                 float l_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err-1]);
                 float r_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err+1]);
-                if(l_side_pk > 0.5*max_coef){
+                if(l_side_pk > 0.25*max_coef){
                     sync_idx -= 2;
                     samp_remng += 2;
-                } else if(r_side_pk > 0.5*max_coef){
+                } else if(r_side_pk > 0.25*max_coef){
                     sync_idx += 2;
                     samp_remng -= 2;
                 }
+                #if DEBUG
+                sync_corr[frm_count-1] = sync_err;
+                #endif
                 // compute the demodulation index and remaining samples after sync correction
                 demod_idx = (sync_idx + SYNC_SYM_LEN - sync_err*OSF)%RX_BUFF_SIZE;
                 samp_remng = samp_remng - SYNC_SYM_LEN + sync_err*OSF;
@@ -418,18 +446,27 @@ int main(int argc, char** argv){
     adc_add = (volatile uint32_t*)rp_AcqGetAdd(RP_CH_2);
 
     // File pointers: Binary Data File, BER Result File
-    FILE *bin_fp, *ber_fp, *sig_fp;
     time_t now = time(NULL);
-    char log_dir[255], ber_file[255], bin_file[255], sig_file[255];
+    FILE *bin_fp, *ber_fp;
+    char log_dir[255], ber_file[255], bin_file[255];
 
     strftime(log_dir, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
     mkdir(log_dir, 0777);
     strftime(bin_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
     strftime(ber_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
-    strftime(sig_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
     bin_fp = fopen(bin_file,"w+");
     ber_fp = fopen(ber_file,"w+");
+
+    #if DEBUG
+    FILE *sig_fp, *qam_fp, *sync_fp;
+    char sig_file[255], qam_file[255], sync_file[255];
+    strftime(qam_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/qam.txt",gmtime(&now));
+    strftime(sync_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/sync.txt",gmtime(&now));
+    strftime(sig_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
+    qam_fp = fopen(qam_file,"w+");
+    sync_fp = fopen(sync_file,"w+");
     sig_fp = fopen(sig_file,"w+");
+    #endif
 
     #if TRACE_PRINT
     // timing variables for checking process and receiving time (only needed when debugging)
@@ -445,7 +482,7 @@ int main(int argc, char** argv){
     // generate the pilots for synchronization error correction exactly same as in Transmit Program
     generate_ofdm_sync();
     // wait till transmission is started
-    usleep(105000);
+    usleep(100000);
     // reset the ADC
     rp_AcqReset();
     // set the ADC sample rate (125e6/decimation)
@@ -561,19 +598,32 @@ int main(int argc, char** argv){
     fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
-    if(ber>0){
+    if(ber > 0.0){
         // save demodulated data
         for(i = 0; i <recvd_frms*bits_per_frame; i++){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
         }
-        for(i = 0; i <recv_idx; i++){
-            fprintf(sig_fp," %f \n", rx_sig_buff[i]);
-        }
     }
-
-    // close files
     fclose(ber_fp);
     fclose(bin_fp);
+
+    #if DEBUG
+    for(i = 0; i <recvd_frms; i++){
+        fprintf(sync_fp," %d, %d \n", sync_indices[i], sync_corr[i]);
+    }
+    for(i = 0; i <recvd_frms*N_SYM*N_QAM; i++){
+        fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
+        fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
+    }
+    for(i = 0; i <recv_idx; i++){
+        fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+    }
+    // close files
+    fclose(qam_fp);
+    fclose(sync_fp);
+    fclose(sig_fp);
+    #endif
+
     #if TRACE_PRINT
     fclose(trace_fp);
     #endif
