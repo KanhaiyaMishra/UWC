@@ -28,14 +28,14 @@
 // Duration of a frame in ms (8.39ms = exact duration)
 #define FRM_DUR 9
 // Receive signal buffer size (should be power of 2 because of unsigned diff of indices later used in the program) )
-#define RX_BUFF_SIZE (8*ADC_BUFFER_SIZE)
+#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
 
 // timediff in miliseconds
 static double timediff_ms(struct timespec *begin, struct timespec *end){
     return (double)( (end->tv_sec - begin->tv_sec)*NANO + (end->tv_nsec - begin->tv_nsec) )/1000000;
 }
 
-// sync symbol buffer to hold pilots
+// sync symbol buffer
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 // FFT Input / Output Buffers (TBD: Check for performance enhancement with global static allocation vs local dynamic allocation)
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
@@ -166,7 +166,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
     // constants: Max sync error = pre introduced synchronization error, n_cp_rem = part of cp that is removed
     const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
-    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.5*(N_FFT*POST_DSF/AMP_ADJ/2);
+    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.2*(N_FFT*POST_DSF/AMP_ADJ/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
@@ -210,7 +210,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             for( ;samp_remng > OSF*N_FFT; samp_remng-=PRE_DSF) {
                 // auto correlation threshold (diff noise from pilot), corr fact threshold (reduces uncessary computation when pilot is yet present)
                 // start computing window minimum once thresholds are crossed
-                if( auto_corr > auto_corr_th && corr_fact>0.3){
+                if( auto_corr > auto_corr_th && corr_fact>0.3 ){
                     // remove all elements from rear having higher corr factor than current corr_fact (they will never be the window minimum in future)
                     while( !empty(&window) && window.base_ptr[window.rear].value >= corr_fact)
                         dequeueR(&window);
@@ -396,10 +396,10 @@ int main(int argc, char** argv){
     time_t now = time(NULL);
     char log_dir[255], ber_file[255], bin_file[255];
 
-    strftime(log_dir, 255,"../log/OFDM%Y_%m_%d_%H_%M_%S",gmtime(&now));
+    strftime(log_dir, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
     mkdir(log_dir, 0777);
-    strftime(bin_file, 255,"../log/OFDM%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
-    strftime(ber_file, 255,"../log/OFDM%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
+    strftime(bin_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
+    strftime(ber_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
     bin_fp = fopen(bin_file,"w+");
     ber_fp = fopen(ber_file,"w+");
 
@@ -428,6 +428,11 @@ int main(int argc, char** argv){
     // continue recieving untill receive signal buffer gets filled
     while( TRUE ){
 
+        #if TRACE_PRINT
+        // get the cpu clock at the start
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        #endif
+
         // get the current ADC write pointer
         rp_AcqGetWritePointer(&curr_pos);
         // calculate the samp_recvd of the data to be acquired
@@ -439,6 +444,13 @@ int main(int argc, char** argv){
             temp = (double) (adc_add[(prev_pos+i)%ADC_BUFFER_SIZE]);
             rx_sig_buff[(recv_idx+i)%RX_BUFF_SIZE] = (temp>8191)?(temp-(1<<14))/((double)(1<<13)):temp/((double)(1<<13)) + DC_ERROR;
         }
+
+        #if TRACE_PRINT
+        // log the acquisition details
+        fprintf(trace_fp,"RX: Recv Index = %d, Current pos = %d, Prev_pos = %d Receive Index = %d \n", recv_idx, curr_pos, prev_pos, recv_idx);
+        // calculate the acquisition time
+        clock_gettime(CLOCK_MONOTONIC, &t2);
+        #endif
 
         // demodulate the receive signal and save the remaining unprocessed samples
         samp_remng = ofdm_demod(rx_bin_ptr, demod_idx, samp_recvd + samp_remng, &bits_recvd);
@@ -492,17 +504,18 @@ int main(int argc, char** argv){
             }
             valid_frms +=1;
             missd_frms += (frm_diff-1);
-            zero_ber_frms += (error_count[i] == 0.0);
+            zero_ber_frms += (ber == 0.0);
             ber += (double)error_count[i];
             fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
             invalid_frms++;
             fprintf(ber_fp,"RX: Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
         }
+
         last_rx_frm = rx_frm_num;
     }
     ber = ber/(valid_frms*data_bits);
-    fprintf(stdout,"RX: Received total %d valid frames with BER = %f, Zero BER Frames = %d\n", valid_frms, ber, zero_ber_frms);
+    fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
     if(ber>0){
