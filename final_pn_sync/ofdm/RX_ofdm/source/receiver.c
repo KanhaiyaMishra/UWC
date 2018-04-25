@@ -22,32 +22,33 @@
 // DC error of ADC
 #define DC_ERROR 0.015
 // number of frames to be received
-#define N_FRAMES 1000
+#define N_FRAMES 10000
 // constant for converting second to nano second
 #define NANO 1000000000LL
 // Duration of a frame in ms (8.39ms = exact duration)
 #define FRM_DUR 9
 // Receive signal buffer size (should be power of 2 because of unsigned diff of indices later used in the program) )
-#define RX_BUFF_SIZE (1100*ADC_BUFFER_SIZE)
-// Whether or not to print traces (True only when debugging, use smaller number of frames)
+#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
+// Whether or not to print traces (True only when DEBUG_INFOging, use smaller number of frames)
 #define TRACE_PRINT FALSE
-#define DEBUG FALSE
+#define DEBUG_INFO FALSE
 
-// timediff in miliseconds
+// time difference in miliseconds
 static double timediff_ms(struct timespec *begin, struct timespec *end){
     return (double)( (end->tv_sec - begin->tv_sec)*NANO + (end->tv_nsec - begin->tv_nsec) )/1000000;
 }
 
-#if DEBUG
+#if DEBUG_INFO
+static float est_attn[N_FRAMES+1] = {0.0};
 static uint32_t sync_indices[N_FRAMES+1] = {0};
 static uint32_t sync_corr[N_FRAMES+1] = {0};
+static double dom_tap[3][N_FRAMES+1] = {{0}};
 static complex_t qam_raw_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
-static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}}
+static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
 #endif
 
-// log file pointer
-FILE *trace_fp = NULL;
 // sync symbol buffer
+float ch_attn = 20;
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 // FFT Input / Output Buffers (TBD: Check for performance enhancement with global static allocation vs local dynamic allocation)
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
@@ -65,10 +66,15 @@ static inline real_t comp_mag_sqr( complex_t num ){
 
 // Inline fucntion for complex division
 static inline complex_t comp_div( complex_t num, complex_t den){
-    complex_t div;
-    div.r = (num.r*den.r + num.i*den.i)/comp_mag_sqr(den);
-    div.i = (num.i*den.r - num.r*den.i)/comp_mag_sqr(den);
-    return div;
+    float a = comp_mag_sqr(den);
+    complex_t div = {0.0};
+    if (a!=0){
+        div.r = (num.r*den.r + num.i*den.i)/a;
+        div.i = (num.i*den.r - num.r*den.i)/a;
+        return div;
+    } else{
+        return div;
+    }
 }
 
 // Generate the pilot symbols
@@ -84,15 +90,15 @@ void generate_ofdm_sync(){
     complex_t temp, *head_ptr, *tail_ptr;
     // get the header and tail pointers of the output buffer
     // head = +1 subcarrier, tail = +N_FFT(or -1) subcarrier
-    head_ptr = sync_qam_tx + 1;
-    tail_ptr = sync_qam_tx + N_FFT - 1;
+    head_ptr = (sync_qam_tx + 1);
+    tail_ptr = (sync_qam_tx + N_FFT - 1);
 
     // temp variable for real and imag components of the QAM symbol
     uint32_t j, i, qam_r, qam_i;
     // max integer value of the real/imag component of the QAM symbol
     real_t qam_limit = pow(2, N_BITS/2) - 1;
     // Nomalization constant for getting average unit power per ofdm symbol
-    real_t norm_const = 1/sqrt( 20*2*(M_QAM - 1)/3*N_DSC/2 );
+    real_t norm_const = 1/sqrt(2*(M_QAM - 1)/3);
 
     for(i=0; i<N_QAM; i++)
     {
@@ -132,9 +138,9 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
     complex_t temp;
     uint32_t i, j, qam_sym_r, qam_sym_i;
     real_t qam_limit = pow(2, N_BITS/2) - 1;
-    real_t norm_const = sqrt( 20*(2*(M_QAM - 1)/3)*N_DSC)/N_FFT;
+    real_t norm_const = sqrt(ch_attn*(2*(M_QAM - 1)/3)*N_DSC)/N_FFT;
 
-    #if DEBUG
+    #if DEBUG_INFO
     static complex_t *qam_raw_ptr=qam_raw_buff;
     static complex_t *qam_demod_ptr=qam_demod_buff;
     #endif
@@ -167,7 +173,7 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
         bin_data += N_BITS;
         qam_data++;
 
-        #if DEBUG
+        #if DEBUG_INFO
         qam_raw_ptr->r = temp.r;
         qam_raw_ptr->i = temp.i;
         qam_demod_ptr->r = qam_sym_r;
@@ -180,25 +186,21 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
 
 // OFDM signal demodulation function receives random number of samples, first detects frame boundary
 // then corrects the sync error and demodulates the signal per symbol basis depending on the #samples
-uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uint32_t *bits_recvd){
+uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uint32_t *bits_recvd){
 
     // local pointers to the global FFT input and output buffers
     complex_t *fft_out = fft_out_buff, *fft_in = fft_in_buff;
-    // local buffers for storing channel coefficients in time and frequency domain
-    complex_t ht[N_FFT] = {{0.0}}, hf[N_FFT] = {{0.0}};
     // FFT/IFFT configuraiton data structure required for FFT/IFFT operation
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
-    kiss_fft_cfg ifft_cfg = kiss_fft_alloc(N_FFT, TRUE, NULL, NULL);
-    // constants: Max sync error = pre introduced synchronization error, n_cp_rem = part of cp that is removed
-    const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
-    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC, auto_corr_th = 0.2*(N_FFT*POST_DSF/AMP_ADJ/2);
+    const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC;
+    const float  auto_corr_th = 0.01*(N_FFT*POST_DSF/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
     static real_t max_of_min = 0.0, auto_corr=0.0, cros_corr=0.0, corr_fact = 0.0;
     // base index of receive data, mid index (base + corr_len), end index (base + 2*corr_len), default sync error (depends on the range of coefficients over which maxima is found)
-    uint32_t idx1=0, idx2=0, idx3=0, demod_sym=0, sync_err = N_FFT/4;
+    uint32_t idx1=0, idx2=0, idx3=0, demod_sym=0;
     // double ended queue to implement continuous window minimum using double sorted set
     // Pair Struct holds: Corr_fact and corresponding Sample index,
     static pair queue[POST_DSF*N_CP_SYNC+2];
@@ -211,7 +213,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
 
     #if TRACE_PRINT
     // log the receive index and number of samples received
-    fprintf(trace_fp,"RX: Sync/Demod Started, Demod Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
+    fprintf(stdout,"RX: Sync/Demod Started, Demod Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
     #endif
 
     // check whether sync is completed or not
@@ -256,14 +258,14 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                         // for current index, algorithm calculates window minimum for the index one window behind
                         sync_idx = (idx1 - (win_len*PRE_DSF))%RX_BUFF_SIZE;
                     }else if (window.base_ptr[window.front].value < 0.6*max_of_min){
-                        #if DEBUG
+                        #if DEBUG_INFO
                         sync_indices[frm_count] = sync_idx;
                         #endif
                         frm_count++;
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
                         sync_done = 1;
                         // compute remaining samples from the sync index
-                        samp_remng += (idx1 - sync_idx);
+                        samp_remng += ((idx1 - sync_idx)%RX_BUFF_SIZE);
                         fprintf(stdout,"RX: Receiving Frame number = %d \n", frm_count);
                         break;
                     }
@@ -278,75 +280,70 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 idx2 = (idx2 + PRE_DSF)%RX_BUFF_SIZE;
                 idx3 = (idx3 + PRE_DSF)%RX_BUFF_SIZE;
             }
-            #if TRACE_PRINT
-            if(!sync_done){
-                fprintf(trace_fp,"RX: Sync not completed, corr_count = %d, remng samples = %d, auto_corr=%f, cros_Corr = %f\n", corr_count, samp_remng, auto_corr, cros_corr);
-            }else{
-                fprintf(trace_fp,"RX: Sync completed, corr_count = %d, remaining samples = %d, SYNC_IDX[%d] = %d\n", corr_count, samp_remng, frm_count, sync_idx);
-            }
-            #endif
         }
     }
     if(sync_done){
         // if sync is completed do the err correction
         if (!sync_corrected){
-            if ( samp_remng >= (N_FFT+n_cp_rem)*OSF ){
-                // downsample and collect samples for pilot estimation
-                for( int i=0; i< N_FFT; i++)
-                    fft_in[i].r = rx_sig_buff[ (sync_idx + (n_cp_rem + i)*OSF)%RX_BUFF_SIZE];
+           if ( samp_remng >= SYNC_SYM_LEN ){
+                // constants: Max sync error = pre introduced synchronization error, n_cp_rem = part of cp that is removed
+                const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
+                 // local buffers for storing time and frequency domain channel coefficients
+                complex_t ht[N_FFT] = {{0.0}}, hf[N_FFT] = {{0.0}};
+                // FFT/IFFT configuraiton data structure required for FFT/IFFT operation
+                kiss_fft_cfg ifft_cfg = kiss_fft_alloc(N_FFT, TRUE, NULL, NULL);
 
+                int sync_err = N_FFT/4, error=0;
+
+                for( int i=0; i< N_FFT; i++)
+                    fft_in[i].r = rx_sig_buff[(sync_idx + (n_cp_rem + i)*OSF)%RX_BUFF_SIZE];
                 // Take fft to get pilot symbols in frequency domain
                 kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
-
                 // calculate channel coefficients by dividing transmit pilots (only at odd subcarriers)
                 for (int i = 1; i<N_QAM; i+=2){
                     hf[i] = comp_div( fft_out[i], sync_qam_tx[i]);
                     hf[N_FFT-i] = comp_div( fft_out[N_FFT-i], sync_qam_tx[N_FFT-i]);
                 }
                 // Take ifft of coeficients to get time domain channel response
-               	kiss_fft( ifft_cfg, (const complex_t *)hf, ht);
-
+                kiss_fft( ifft_cfg, (const complex_t *)hf, ht);
                 // Start from mid point in the channel response since there will be two maxima, due to anti-symmetricity in the pilot
                 // Only need to scan for MAX in a window of N_FFT/2 in the middle, this will give max correction of of +/-(N_FFT/4) samples
-                complex_t *ch_ptr = ht+N_FFT/4+max_sync_error;
-
+                complex_t *ch_ptr = (ht+N_FFT/4+max_sync_error);
                 // Set dominant tap location in the channel to 0
                 float max_coef = comp_mag_sqr(ch_ptr[0]);
-
-                // Find the dominant tap searching across the window of N_FFT/2
+                // Find the dominant tap searching across pilot locations
                 for( int i=1; i<N_FFT/2; i++) {
                     if( max_coef < comp_mag_sqr(ch_ptr[i]) ){
                         max_coef = comp_mag_sqr(ch_ptr[i]);
                         sync_err = N_FFT/4-i;
                     }
                 }
-
-                // confirm if the tap is actually dominant (for cases when sync_idx happens to be on the boundary of two samples, peak could be incorrect,
+                            // confirm if the tap is actually dominant (for cases when sync_idx happens to be on the boundary of two samples, peak could be incorrect,
                 // Either side peak of the maxima might share almost equal power), correct sync will be to move slightly(2 samples) towards that side peak
                 float l_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err-1]);
                 float r_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err+1]);
-                if(l_side_pk > 0.25*max_coef){
-                    sync_idx -= 2;
-                    samp_remng += 2;
-                } else if(r_side_pk > 0.25*max_coef){
-                    sync_idx += 2;
-                    samp_remng -= 2;
-                }
-                #if DEBUG
-                sync_corr[frm_count-1] = sync_err;
+                if(l_side_pk > 0.1*max_coef){
+                    error = (sync_err*OSF+2);
+                } else if(r_side_pk > 0.1*max_coef){
+                    error = (sync_err*OSF-2);
+                } else
+                    error = sync_err*OSF;
+
+                ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/max_coef):ch_attn;
+
+                #if DEBUG_INFO
+                sync_corr[frm_count-1] = error;
+                dom_tap[0][frm_count-1] = l_side_pk;
+                dom_tap[1][frm_count-1] = max_coef;
+                dom_tap[2][frm_count-1] = r_side_pk;
+                est_attn[frm_count-1] = ch_attn;
                 #endif
+                kiss_fft_free(ifft_cfg);
                 // compute the demodulation index and remaining samples after sync correction
-                demod_idx = (sync_idx + SYNC_SYM_LEN - sync_err*OSF)%RX_BUFF_SIZE;
-                samp_remng = samp_remng - SYNC_SYM_LEN + sync_err*OSF;
+                demod_idx = (sync_idx + SYNC_SYM_LEN - error)%RX_BUFF_SIZE;
+                samp_remng = samp_remng - SYNC_SYM_LEN + error;
                 sync_corrected = 1;
             }
-            #if TRACE_PRINT
-            if(!sync_corrected){
-                fprintf(trace_fp,"RX: Demoduation not completed, sync correction not completed\n");
-            }else{
-                fprintf(trace_fp,"RX: Sync correction done by %d samples, Corrected Sync Index = %d\n", sync_err*OSF, demod_idx);
-            }
-            #endif
         }
 
         // start demdoulation once sync correction is done
@@ -361,7 +358,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
                 sync_corrected = 0;
                 max_of_min = 0;
                 #if TRACE_PRINT
-                fprintf(trace_fp,"RX: Demodulation Completed for Frame Num %d, Symbol Count = %d\n", frm_count, sym_count+demod_sym);
+                fprintf(stdout,"RX: Demodulation Completed for Frame Num %d, Symbol Count = %d\n", frm_count, sym_count+demod_sym);
                 #endif
             } else{
                 // if not demodulate all symbols contained within the received samples
@@ -404,8 +401,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, ui
             demod_idx = (demod_idx - N_CP_DATA*OSF)%RX_BUFF_SIZE;
             // free fft configuration variables
             kiss_fft_free(fft_cfg);
-            kiss_fft_free(ifft_cfg);
-
             // recursive call at the end of each frame when there are enough samples remaining for synchronization and/or demodulation
             if( sym_count==N_SYM && samp_remng >= (OSF*N_FFT)){
                 uint32_t new_bits = 0;
@@ -427,7 +422,7 @@ int main(int argc, char** argv){
         fprintf(stderr,"RX: Initialization failed");
 
     // received samples, remaining samples, received bits, current and previous ADC write pointer positions
-    uint32_t samp_recvd = 0, samp_remng =0, bits_recvd = 0, curr_pos, prev_pos=0, recvd_frms = 1;
+    uint32_t samp_recvd = 0, bits_recvd = 0, curr_pos, prev_pos=0, recvd_frms = 1;
     // no of bits per frame and number of data bits
     uint32_t bits_per_frame = N_SYM*N_QAM*N_BITS, data_bits = bits_per_frame-FRM_NUM_BITS;
     // buffer for storing demodulated binary data (1 extra buffer to avoid segmentation fault in case of overfill)
@@ -438,9 +433,9 @@ int main(int argc, char** argv){
     uint8_t *rx_bin_ptr = rx_bin_buff;
     // demod and recv pointers within the signal buffer
     uint32_t demod_idx = 0, recv_idx = 0;
+    int32_t adc_counts =0, samp_remng = 0;
     // timing variables
     struct timespec begin, end;
-    int32_t temp;
     // get the DAC hardware address
     static volatile uint32_t* adc_add = NULL;
     adc_add = (volatile uint32_t*)rp_AcqGetAdd(RP_CH_2);
@@ -457,7 +452,7 @@ int main(int argc, char** argv){
     bin_fp = fopen(bin_file,"w+");
     ber_fp = fopen(ber_file,"w+");
 
-    #if DEBUG
+    #if DEBUG_INFO
     FILE *sig_fp, *qam_fp, *sync_fp;
     char sig_file[255], qam_file[255], sync_file[255];
     strftime(qam_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/qam.txt",gmtime(&now));
@@ -469,16 +464,16 @@ int main(int argc, char** argv){
     #endif
 
     #if TRACE_PRINT
-    // timing variables for checking process and receiving time (only needed when debugging)
+    // timing variables for checking process and receiving time (only needed when DEBUG_INFOging)
     struct timespec t1, t2, t3;
     // log file pointer
-    char trace_file[255];
-    strftime(trace_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
-    trace_fp = fopen(trace_file,"w+");
+//    char trace_file[255];
+  //  strftime(trace_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
+    //trace_fp = fopen(trace_file,"w+");
     #endif
 
     // check if valid RX address is acquired
-    fprintf(stdout, "RX: Entered, Address = %p\n", adc_add);
+    fprintf(stdout, "RX: Entered, Address = %p, adc_counts = %d\n", adc_add, adc_counts);
     // generate the pilots for synchronization error correction exactly same as in Transmit Program
     generate_ofdm_sync();
     // wait till transmission is started
@@ -512,22 +507,24 @@ int main(int argc, char** argv){
         // calculate the samp_recvd of the data to be acquired
         samp_recvd = (curr_pos - prev_pos) % ADC_BUFFER_SIZE;
 
-        // acquire the data into rx signal buffer from ADC buffer either using library function or using hardware address(much faster)
-//	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, (rx_sig_buff+recv_idx) );
+        // acquire the data into rx signal buffer from ADC buffer either using library functon or using hardware address(much faster)
+//	    rp_AcqGetDataV_WA(RP_CH_2, prev_pos, &samp_recvd, rx_sig_buff, recv_idx, RX_BUFF_SIZE );
         for (int i =0; i<samp_recvd; i++){
-            temp = (double) (adc_add[(prev_pos+i)%ADC_BUFFER_SIZE]);
-            rx_sig_buff[(recv_idx+i)%RX_BUFF_SIZE] = (temp>8191)?(temp-(1<<14))/((double)(1<<13)):temp/((double)(1<<13)) + DC_ERROR;
+            adc_counts = ( adc_add[(prev_pos+i)%ADC_BUFFER_SIZE] & 0x3FFF );
+            adc_counts = ( (adc_counts < (1<<13)) ? adc_counts : (adc_counts - (1<<14)) );
+            rx_sig_buff[(recv_idx+i)%RX_BUFF_SIZE] = ((double)adc_counts)/(1<<13) + DC_ERROR;
         }
 
         #if TRACE_PRINT
         // log the acquisition details
-        fprintf(trace_fp,"RX: Recv Index = %d, Current pos = %d, Prev_pos = %d Receive Index = %d \n", recv_idx, curr_pos, prev_pos, recv_idx);
+        fprintf(stdout,"RX: Recv Index = %d, Current pos = %d, Prev_pos = %d Receive Index = %d \n", recv_idx, curr_pos, prev_pos, recv_idx);
         // calculate the acquisition time
         clock_gettime(CLOCK_MONOTONIC, &t2);
         #endif
 
         // demodulate the receive signal and save the remaining unprocessed samples
         samp_remng = ofdm_demod(rx_bin_ptr, demod_idx, samp_recvd + samp_remng, &bits_recvd);
+
         // update the ADC pointer position
         prev_pos = curr_pos;
         // advance the signal buffer pointer
@@ -541,7 +538,7 @@ int main(int argc, char** argv){
         // get the current clock time to determine whether or not to stop
         clock_gettime(CLOCK_MONOTONIC, &end);
         // check if all frames are received or Time is over (avoid infinite loop, in case all frames were not received)
-        if(rx_bin_ptr > rx_bin_end || timediff_ms(&begin, &end)> (N_FRAMES*FRM_DUR) ){
+        if(rx_bin_ptr > rx_bin_end || timediff_ms(&begin, &end)> ((N_FRAMES+1)*FRM_DUR) ){
             // Calculate the number of frames received
             recvd_frms = ( (rx_bin_ptr - rx_bin_buff)/sizeof(uint8_t) )/bits_per_frame;
             if (rx_bin_ptr > rx_bin_end)
@@ -554,16 +551,17 @@ int main(int argc, char** argv){
         #if TRACE_PRINT
         // calculate the data processing time
         clock_gettime(CLOCK_MONOTONIC, &t3);
-        fprintf(trace_fp,"RX: Read time = %lfms, Process time = %lfms, Received Bits = %d, Remaining Samples = %d\n", timediff_ms(&t1, &t2), timediff_ms(&t2, &t3), bits_recvd, samp_remng);
+        fprintf(stdout,"RX: Read time = %lfms, Process time = %lfms, Received Bits = %d, Remaining Samples = %d\n", timediff_ms(&t1, &t2), timediff_ms(&t2, &t3), bits_recvd, samp_remng);
         #endif
     }
 
     // BER Evaluation Variables: Last recvd frame, RX and TX Frame numbers, loop counters, missed, valid, invalid, zero_ber frame counts, frm diff between last and latest RX frame
-    uint32_t error_count[recvd_frms], last_rx_frm =0, rx_frm_num, tx_frm_num = 1, i ,j, missd_frms=0, valid_frms=0, invalid_frms=0, zero_ber_frms=0, frm_diff=0;
+    uint32_t error_count[recvd_frms], last_rx_frm =0, rx_frm_num, tx_frm_num = 1, i ,j, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
     uint8_t *tx_bin_buff = (uint8_t *)malloc(data_bits*sizeof(uint8_t));
     uint8_t *tx_bin_ptr;
     float ber = 0.0;
 
+    memset(error_count, 0, recvd_frms*sizeof(uint32_t));
     pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
     for(i=0; i<recvd_frms; i++){
         tx_bin_ptr = tx_bin_buff;
@@ -576,22 +574,22 @@ int main(int argc, char** argv){
 
         if ( frm_diff <= 5 && frm_diff >= 1 ){
             while(rx_frm_num >= tx_frm_num) {
-                error_count[i] = 0;
-                for(j=0; j<(data_bits); j++)
-                    error_count[i] += (*(tx_bin_ptr++) != *(rx_bin_ptr++));
+                if(rx_frm_num==tx_frm_num){
+                    for(j=0; j<(data_bits); j++)
+                        error_count[i] += (*(tx_bin_ptr++) != *(rx_bin_ptr++));
+                }
                 pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
                 tx_frm_num++;
             }
             valid_frms +=1;
             missd_frms += (frm_diff-1);
-            zero_ber_frms += (ber == 0.0);
             ber += (double)error_count[i];
-            fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
+            if(error_count[i])
+                fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
             invalid_frms++;
-            fprintf(ber_fp,"RX: Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
+            fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame = %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
         }
-
         last_rx_frm = rx_frm_num;
     }
     ber = ber/(valid_frms*data_bits);
@@ -607,16 +605,18 @@ int main(int argc, char** argv){
     fclose(ber_fp);
     fclose(bin_fp);
 
-    #if DEBUG
-    for(i = 0; i <recvd_frms; i++){
-        fprintf(sync_fp," %d, %d \n", sync_indices[i], sync_corr[i]);
-    }
-    for(i = 0; i <recvd_frms*N_SYM*N_QAM; i++){
-        fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
-        fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
-    }
-    for(i = 0; i <recv_idx; i++){
-        fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+    #if DEBUG_INFO
+    if(ber>0.0){
+        for(i = 0; i <recvd_frms; i++){
+            fprintf(sync_fp," %d, %d, \t%lf, %lf, %lf, \t%lf\n", sync_indices[i]+616, sync_corr[i], dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
+        }
+        for(i = 0; i <recvd_frms*N_SYM*N_QAM; i++){
+            fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
+            fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
+        }
+        for(i = 0; i <recv_idx; i++){
+            fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+        }
     }
     // close files
     fclose(qam_fp);
@@ -625,7 +625,7 @@ int main(int argc, char** argv){
     #endif
 
     #if TRACE_PRINT
-    fclose(trace_fp);
+    fclose(stdout);
     #endif
 
     // Stop acquisition and release resources
