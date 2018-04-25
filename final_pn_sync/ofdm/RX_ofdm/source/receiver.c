@@ -284,7 +284,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                         sync_err = N_FFT/4-i;
                     }
                 }
-                            // confirm if the tap is actually dominant (for cases when sync_idx happens to be on the boundary of two samples, peak could be incorrect,
+                // confirm if the tap is actually dominant (for cases when sync_idx happens to be on the boundary of two samples, peak could be incorrect,
                 // Either side peak of the maxima might share almost equal power), correct sync will be to move slightly(2 samples) towards that side peak
                 float l_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err-1]);
                 float r_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err+1]);
