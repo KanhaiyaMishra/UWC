@@ -10,7 +10,7 @@
 #include "ofdm.h"
 #include "kiss_fft.h"
 
-#define N_FRAMES 1020
+#define N_FRAMES 1010
 #define MAX_COUNT (1<<14)
 
 static real_t sync_sym[SYNC_SYM_LEN] = {0.0};
@@ -79,7 +79,7 @@ void qam_mod(complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_sym){
             // data symbols use all data subcarriers (except DC)
     	    (head_ptr)->r = temp.r;
             (head_ptr++)->i = temp.i;
-            (tail_ptr)->r = temp.r; 
+            (tail_ptr)->r = temp.r;
             (tail_ptr--)->i = -temp.i;
        }
    }
@@ -122,7 +122,7 @@ void ofdm_mod(real_t *ofdm_tx_cp, uint8_t *bin_tx) {
         // retreive cp location
         ofdm_tx -= (N_CP_DATA*OSF);
         // add cp to both +ve and -ve ofdm symbols
-	for(int i=0; i<(N_CP_DATA*OSF); i++){
+        for(int i=0; i<(N_CP_DATA*OSF); i++){
         #ifdef FLIP_OFDM
             *(ofdm_tx_cp + DATA_SYM_LEN) = *(ofdm_tx + DATA_SYM_LEN);
             *ofdm_tx_cp++ = *ofdm_tx++;
@@ -156,7 +156,7 @@ void generate_ofdm_sync(){
 
     int i, k;
     // sync sequence binary data holder
-    uint8_t *sync_bin = malloc(N_DSC*sizeof(uint8_t)/2);
+    uint8_t sync_bin[N_QAM*N_BITS/2]={0};
     // CP length and symbol length
     complex_t *ifft_out = ifft_out_buff, *ifft_in = ifft_in_buff;
     // pointer to the ofdm symbol buffer with and without CP
@@ -164,7 +164,7 @@ void generate_ofdm_sync(){
     // configuration variable for kiss IFFT library
     kiss_fft_cfg ifft_cfg = kiss_fft_alloc( N_FFT, TRUE, NULL, NULL );
     // generate binary data for sync sequence
-    pattern_LFSR_byte(PRBS7, sync_bin, N_DSC/2);
+    pattern_LFSR_byte(PRBS7, sync_bin, N_QAM*N_BITS/2);
 
     // qam modulate the binary data: [N_FFT] = [DC QAM_DATA (N_GAURD/2-1) conj(flip(QAM_DATA))]
     qam_mod( ifft_in, sync_bin, TRUE);
@@ -201,7 +201,6 @@ void generate_ofdm_sync(){
     #endif
     }
     kiss_fft_free(ifft_cfg);
-    // return the number of bits per frame
 }
 
 int main(int argc, char **argv){
