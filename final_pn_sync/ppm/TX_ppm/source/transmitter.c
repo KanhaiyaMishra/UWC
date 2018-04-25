@@ -40,14 +40,13 @@ void ppm_init(float *ppm_tx){
 
 void ppm_mod(float *ppm_tx, uint8_t *bin_tx){
 
-	uint32_t i=0, j=0, k=0, pos=0;
+    uint32_t i=0, j=0, k=0, pos=0;
 
     // write the ppm data into the buffer
-  	for( i=0; i<n_sym; i++ )
-	{
+    for( i=0; i<n_sym; i++ ){
         pos = 0;
         for( j=0; j<N_BITS; j++)
-    	    pos |= *(bin_tx++)<<j;
+            pos |= *(bin_tx++)<<j;
 
         for( k=0; k<PPM; k++){
             if(k!=pos){
@@ -64,17 +63,17 @@ void ppm_mod(float *ppm_tx, uint8_t *bin_tx){
 int main(int argc, char **argv){
 
     // Initialize the board
-	if(rp_Init() != RP_OK)
-		fprintf(stderr,"TX: Initialization Failed\n");
+    if(rp_Init() != RP_OK)
+        fprintf(stderr,"TX: Initialization Failed\n");
 
     // Calculate frame freq, Sample rate = 125/64 Msps, One Frame = 16384 Samples
-	float freq = 125e6/(16384*64);
+    float freq = 125e6/(16384*64);
     // Calculate frame duration in micro seconds
-	uint32_t period = round(1e6/freq);
+    uint32_t period = round(1e6/freq);
     // Temporary variables
     uint32_t frm_num, i, pos;
     // Initialize the modulator
-	uint32_t n_bits_total = n_sym*N_BITS;
+    uint32_t n_bits_total = n_sym*N_BITS;
     // Allocate memory for TX signal and TX binary data
     float *tx_sig_buff = (float *)malloc(ADC_BUFFER_SIZE*sizeof(float));
     uint8_t *tx_bin_buff = (uint8_t *)malloc(n_bits_total*sizeof(uint8_t));
@@ -84,7 +83,7 @@ int main(int argc, char **argv){
     static volatile int32_t* dac_add;
     dac_add = rp_GenGetAdd(RP_CH_2);
 
-	fprintf(stdout,"TX: Entered, DAC Address=%p\n", dac_add);
+    fprintf(stdout,"TX: Entered, DAC Address=%p\n", dac_add);
 
     //write the sync_sequence into the signal buffer
     ppm_init(tx_sig_buff);
@@ -92,15 +91,12 @@ int main(int argc, char **argv){
     // set DAC output waveform parameters
     rp_GenWaveform(RP_CH_2, RP_WAVEFORM_ARBITRARY);
     rp_GenOffset(RP_CH_2, 0);
-	rp_GenAmp(RP_CH_2, 1.0);
+    rp_GenAmp(RP_CH_2, 1.0);
     rp_GenFreq(RP_CH_2, freq);
     rp_GenMode(RP_CH_2, RP_GEN_MODE_BURST);
     rp_GenBurstCount(RP_CH_2, 1);
     rp_GenBurstRepetitions(RP_CH_2, 1);
     rp_GenBurstPeriod(RP_CH_2, period);
-
-    // library function to write aribitrary data in DAC Buffer, should not be used. Takes very long time to write the data.
-//  rp_GenArbWaveform(RP_CH_2, tx_sig_buff, ADC_BUFFER_SIZE);
 
     // Get start time
     clock_gettime(CLOCK_MONOTONIC, &begin);
@@ -112,9 +108,9 @@ int main(int argc, char **argv){
         for(i=0; i<FRM_NUM_BITS; i++)
             tx_bin_buff[i] = ((frm_num>>i)&1);
         // Generate the prbs data
-		prbs_gen_byte(PRBS11, tx_bin_buff+FRM_NUM_BITS, n_bits_total-FRM_NUM_BITS);
+        prbs_gen_byte(PRBS11, tx_bin_buff+FRM_NUM_BITS, n_bits_total-FRM_NUM_BITS);
         // PPM modulation using prbs data
-		ppm_mod(tx_sig_buff+sync_len, tx_bin_buff);
+        ppm_mod(tx_sig_buff+sync_len, tx_bin_buff);
         // Write the signal into the DAC buffer following the read pointer
         for(i=0; i<ADC_BUFFER_SIZE;){
             rp_GenGetReadPointer(&pos, RP_CH_2);
@@ -133,13 +129,13 @@ int main(int argc, char **argv){
     fprintf(stdout,"TX: Transmitted %d Frames in %lf sec\n", N_FRAMES, timediff_ms(&begin, &end)/1000);
 
     // Disable the DAC output
-	rp_GenOutDisable(RP_CH_2);
+    rp_GenOutDisable(RP_CH_2);
 
     // Release Resources
     free(tx_sig_buff);
-	free(tx_bin_buff);
-	rp_Release();
+    free(tx_bin_buff);
+    rp_Release();
 
-	fprintf(stdout,"TX: Transmission complete, Exiting.\n");
+    fprintf(stdout,"TX: Transmission complete, Exiting.\n");
     return 0;
 }

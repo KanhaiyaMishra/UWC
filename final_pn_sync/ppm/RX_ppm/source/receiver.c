@@ -75,7 +75,7 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
             // set sync_done flag if correlation reaches maximum
             if(pn_corr == corr_max){
                 frm_count++;
-			    sync_done = 1;
+                sync_done = 1;
                 demod_idx = (demod_idx+PN_SEQ_LEN*OSF)%RX_BUFF_SIZE;
                 samp_remng -= (PN_SEQ_LEN*OSF);
                 fprintf(stdout,"RX: Receiving Frame number = %d \n", frm_count);
@@ -98,7 +98,7 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
         // demodulate ppm data symbols
         for(i=0; i<demod_sym; i++ ){
             // reset the pulse position to be zero
-		    pos = 0;
+            pos = 0;
             max = rx_sig_buff[demod_idx];
             demod_idx = (demod_idx+OSF)%RX_BUFF_SIZE;
             // detect the maximum by comparing the pulse positions
@@ -107,7 +107,7 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
                 if( adc_counts > max ){
                     pos = j;
                     max = adc_counts;
-			    }
+                }
                 demod_idx = (demod_idx+OSF)%RX_BUFF_SIZE;
             }
             // convert the position to binary value and write into the binary buffer
@@ -132,18 +132,18 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
 
 int main(int argc, char** argv){
 
-	if(rp_Init()!=RP_OK)
-		fprintf(stderr,"RX: Initialization failed");
+    if(rp_Init()!=RP_OK)
+        fprintf(stderr,"RX: Initialization failed");
 
     uint32_t bits_per_frame = N_BITS*n_sym, data_bits = bits_per_frame - FRM_NUM_BITS;
     // received samples, remaining samples, received bits, current and previous ADC ptr pos
-	uint32_t samp_recvd = 0, samp_remng =0, bits_recvd = 0, curr_pos=0, prev_pos=0, recvd_frms=1;
+    uint32_t samp_recvd = 0, samp_remng =0, bits_recvd = 0, curr_pos=0, prev_pos=0, recvd_frms=1;
     // receive binary buffer (one extra buffer to take care of spillage while checking end of buffer)
     uint8_t *rx_bin_buff = (uint8_t *)malloc((N_FRAMES+1)*N_BITS*n_sym*sizeof(uint8_t));
     // end of last binary buffer (last frame)
-	uint8_t *rx_bin_end = rx_bin_buff + N_FRAMES*bits_per_frame;
+    uint8_t *rx_bin_end = rx_bin_buff + N_FRAMES*bits_per_frame;
     // current location of pointer in binary buffer
-	uint8_t *rx_bin_ptr = rx_bin_buff;
+    uint8_t *rx_bin_ptr = rx_bin_buff;
     // location receive pointer, demod pointer in rx signal buffer
     uint32_t demod_idx = 0, recv_idx = 0;
     // get the DAC hardware address
@@ -169,13 +169,13 @@ int main(int argc, char** argv){
 
 	fprintf(stdout, "RX: Entered, max correlation = %d, add = %p\n", corr_max, adc_add);
     // wait till transmission is started
-	usleep(100000);
+    usleep(100000);
     // reset the ADC
     rp_AcqReset();
     // set the ADC sample rate (125e6/decimation)
     rp_AcqSetDecimation(RP_DEC_64);
     // enable continuous acquisition
-	rp_AcqSetArmKeep(true);
+    rp_AcqSetArmKeep(true);
     // set the trigger delay
     rp_AcqSetTriggerDelay(0);
     // set trigger source (instantaneous triggering)
@@ -190,9 +190,9 @@ int main(int argc, char** argv){
 	while( TRUE ){
 
         // get the current ADC write pointer
-		rp_AcqGetWritePointer(&curr_pos);
+        rp_AcqGetWritePointer(&curr_pos);
         // calculate the samp_recvd of the data to be acquired
-		samp_recvd = (curr_pos - prev_pos) % ADC_BUFFER_SIZE;
+        samp_recvd = (curr_pos - prev_pos) % ADC_BUFFER_SIZE;
         // acquire the data into rx signal buffer from hardware ADC buffer
         for (i =0; i<samp_recvd; i++){
             adc_counts = ( adc_add[(prev_pos+i)%ADC_BUFFER_SIZE] & 0x3FFF );
@@ -201,9 +201,9 @@ int main(int argc, char** argv){
         }
 
         // demodulate the receive signal and save the remaining unprocessed samples
-		samp_remng = ppm_demod(rx_bin_ptr, demod_idx, samp_recvd+samp_remng, &bits_recvd);
+        samp_remng = ppm_demod(rx_bin_ptr, demod_idx, samp_recvd+samp_remng, &bits_recvd);
         // update the ADC pointer position
-		prev_pos = curr_pos;
+        prev_pos = curr_pos;
         // advance the signal buffer pointer
         recv_idx = (recv_idx+samp_recvd)%RX_BUFF_SIZE;
         // advance the demod pointer in the buffer
