@@ -22,6 +22,8 @@
 // constant for converting second to nano second
 #define NANO 1000000000LL
 
+// File pointer to log traces
+FILE *trace_fp = NULL;
 // Number of bits to be received per frame
 uint32_t n_sym = (ADC_BUFFER_SIZE/OSF-PN_SEQ_LEN)/PPM;
 // rx signal buffer to store data from ADC hardware buffer
@@ -192,7 +194,6 @@ int main(int argc, char** argv){
         // calculate the samp_recvd of the data to be acquired
 		samp_recvd = (curr_pos - prev_pos) % ADC_BUFFER_SIZE;
         // acquire the data into rx signal buffer from hardware ADC buffer
-//	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, rx_sig_buff+recv_idx);
         for (i =0; i<samp_recvd; i++){
             adc_counts = ( adc_add[(prev_pos+i)%ADC_BUFFER_SIZE] & 0x3FFF );
             adc_counts = ( (adc_counts < (1<<13)) ? adc_counts : (adc_counts - (1<<14)) );
@@ -225,11 +226,12 @@ int main(int argc, char** argv){
 	}
 
     // BER Evaluation Varibales: Error Count per frame, Last frame recevied, RX and TX Frame numbers, Valid, invalid and Missed Frame numbers
-    uint32_t error_count[recvd_frms], last_rx_frm = 0, rx_frm_num=0, tx_frm_num = 1, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0, zero_ber_frms=0;
+    uint32_t error_count[recvd_frms], last_rx_frm = 0, rx_frm_num=0, tx_frm_num = 1, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
     // buffer to hold tx binary data, pointer to tx binary buffer
     uint8_t *tx_bin_buff = (uint8_t *)malloc(data_bits*sizeof(uint8_t)), *tx_bin_ptr;
     float ber = 0.0;
 
+    memset(error_count, 0, recvd_frms*sizeof(uint32_t));
     // generate first transmit frame
     pattern_LFSR_byte(PRBS11, tx_bin_buff, data_bits);
     // iterate over all received frames
@@ -248,27 +250,28 @@ int main(int argc, char** argv){
         // evaluate ber only if frm_diff is less than 5
         if ( frm_diff >= 1 && frm_diff <= 5 ){
             while(rx_frm_num >= tx_frm_num) {
-                error_count[i] = 0;
-                for(j=0; j<(data_bits); j++)
-                    error_count[i] += (*(tx_bin_ptr++) != *(rx_bin_ptr++));
+                if(rx_frm_num == tx_frm_num){
+                    for(j=0; j<(data_bits); j++)
+                        error_count[i] += (*(tx_bin_ptr++) != *(rx_bin_ptr++));
+                }
                 pattern_LFSR_byte(PRBS11, tx_bin_buff, data_bits);
                 tx_frm_num++;
             }
             valid_frms +=1;
             missd_frms += (frm_diff-1);
-            zero_ber_frms += (error_count[i]== 0.0);
             ber += (double)error_count[i];
-            fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
+            if (error_count[i])
+                fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         // if frm_diff not within range, call it invalid frame
         } else {
             invalid_frms++;
-            fprintf(ber_fp,"RX: Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
+            fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
         }
         last_rx_frm = rx_frm_num;
     }
     // calculate average BER
     ber = ber/(valid_frms*data_bits);
-    fprintf(stdout,"RX: Received total %d valid frames with BER = %f, Zero Error Frames = %d\n", valid_frms, ber, zero_ber_frms);
+    fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
     // save demodulated data if ber is non-zero
