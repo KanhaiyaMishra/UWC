@@ -85,20 +85,11 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
                 demod_idx = (demod_idx+PN_SEQ_LEN*OSF)%RX_BUFF_SIZE;
                 samp_remng -= (PN_SEQ_LEN*OSF);
                 fprintf(stdout,"RX: Receiving Frame number = %d \n", frm_count);
-                #if TRACE_PRINT
-                fprintf(trace_fp,"RX: Demodulation not completed, Sync completed, sync_idx[%d] = %d\n", frm_count, demod_idx);
-                #endif
                 break;
 		    }
             demod_idx++;
             samp_remng--;
         }
-        #if TRACE_PRINT
-        if (!sync_done){
-            // if sync is not done, exit the demod function and return the num of un-processed samples
-            fprintf(trace_fp,"RX: Demodulation completed, Sync not completed, Stop Index = %d, Remaining %d Samples\n", demod_idx, samp_remng);
-        }
-        #endif
     }
     // demodulate the data symbols
     if (sync_done){
@@ -269,7 +260,7 @@ int main(int argc, char** argv){
 	}
 
     // BER Evaluation Varibales: Error Count per frame, Last frame recevied, RX and TX Frame numbers, Valid, invalid and Missed Frame numbers
-    uint32_t error_count[recvd_frms], last_rx_frm = 0, rx_frm_num=0, tx_frm_num = 1, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0, zero_ber_frms=0;
+    uint32_t error_count[recvd_frms], last_rx_frm = 0, rx_frm_num=0, tx_frm_num = 1, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
     // buffer to hold tx binary data, pointer to tx binary buffer
     uint8_t *tx_bin_buff = (uint8_t *)malloc(data_bits*sizeof(uint8_t)), *tx_bin_ptr;
     float ber = 0.0;
@@ -292,27 +283,28 @@ int main(int argc, char** argv){
         // evaluate ber only if frm_diff is less than 5
         if ( frm_diff >= 1 && frm_diff <= 5 ){
             while(rx_frm_num >= tx_frm_num) {
-                error_count[i] = 0;
-                for(j=0; j<(data_bits); j++)
-                    error_count[i] += (*(tx_bin_ptr++) != *(rx_bin_ptr++));
+                if(rx_frm_num == tx_frm_num){
+                    for(j=0; j<(data_bits); j++)
+                        error_count[i] += (*(tx_bin_ptr++) != *(rx_bin_ptr++));
+                }
                 pattern_LFSR_byte(PRBS11, tx_bin_buff, data_bits);
                 tx_frm_num++;
             }
             valid_frms +=1;
             missd_frms += (frm_diff-1);
-            zero_ber_frms += (error_count[i]== 0.0);
             ber += (double)error_count[i];
-            fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
+            if (error_count[i])
+                fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         // if frm_diff not within range, call it invalid frame
         } else {
             invalid_frms++;
-            fprintf(ber_fp,"RX: Received invalid Frame number %d, ignoring for BER Calculation\n", rx_frm_num);
+            fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
         }
         last_rx_frm = rx_frm_num;
     }
     // calculate average BER
     ber = ber/(valid_frms*data_bits);
-    fprintf(stdout,"RX: Received total %d valid frames with BER = %f, Zero Error Frames = %d\n", valid_frms, ber, zero_ber_frms);
+    fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
     // save demodulated data if ber is non-zero
