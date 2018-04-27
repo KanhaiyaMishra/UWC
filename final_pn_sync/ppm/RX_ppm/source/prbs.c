@@ -30,3 +30,7 @@ void pattern_LFSR_byte(order_t prbs_order, uint8_t *bitsequence, uint32_t nBits)
     	}
 	start = a;
 }
+
+void pattern_LFSR_reset(){
+    start = 0x02;
+}

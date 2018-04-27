@@ -11,7 +11,7 @@
 
 #define NANO 1000000000LL
 // # frames to transmitted
-#define N_FRAMES 1020
+#define N_FRAMES 1010
 // max value to be written to DAC
 #define MAX_COUNT (1<<14)
 // buffer to hold synchornizations sequence

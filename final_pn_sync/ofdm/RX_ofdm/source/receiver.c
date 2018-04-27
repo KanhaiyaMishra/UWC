@@ -593,9 +593,52 @@ int main(int argc, char** argv){
         last_rx_frm = rx_frm_num;
     }
     ber = ber/(valid_frms*data_bits);
-    fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
+    fprintf(stdout,"\nRX: Calculating BER per received frame basis\n");
+    fprintf(stdout,"RX: Received total %d valid frames with BER1 = %f\n", valid_frms, ber);
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
+    fprintf(stdout,"\nRX: Calculating BER assuming no frames are missed\n");
+    pattern_LFSR_reset();
+    generate_ofdm_sync();
+    memset(error_count, 0, recvd_frms*sizeof(uint32_t));
+    ber = 0;
+    // find a valid frm_num (1-10)
+    tx_frm_num=1;
+    rx_bin_ptr = rx_bin_buff;
+    tx_bin_ptr = tx_bin_buff;
+    pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
+    fprintf(stdout,"RX: Searching First valid received frame\n");
+    while(TRUE){
+        rx_frm_num = 0;
+        for(j=0; j<FRM_NUM_BITS; j++)
+            rx_frm_num |= (*(rx_bin_ptr++)<<j);
+        if(rx_frm_num<10){
+            fprintf(stdout,"RX: First valid received frame is %d\n", rx_frm_num);
+            break;
+        } else if(rx_bin_ptr-rx_bin_buff > 10*bits_per_frame){
+            rx_bin_ptr = rx_bin_buff+FRM_NUM_BITS;
+            fprintf(stdout,"RX: Could not find any valid frame, setting first valid frame to be 1\n");
+            rx_frm_num = 1;
+            break;
+        }
+        rx_bin_ptr += bits_per_frame;
+    }
+    while(tx_frm_num!=rx_frm_num){
+        pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
+        tx_frm_num++;
+    }
+    for (i=0; i<=(recvd_frms-rx_frm_num); i++){
+        for(j=0; j<(data_bits); j++)
+            error_count[i] += (*(tx_bin_ptr++) != *(rx_bin_ptr++));
+        rx_bin_ptr+= FRM_NUM_BITS;
+        tx_bin_ptr = tx_bin_buff;
+        ber += (double)error_count[i];
+        pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
+    }
+    ber = ber/(i*data_bits);
+    fprintf(stdout,"RX: Received total %d valid frames with BER2 = %f\n", i, ber);
+
+    // Save post-processed and online received data
     if(ber > 0.0){
         // save demodulated data
         for(i = 0; i <recvd_frms*bits_per_frame; i++){
