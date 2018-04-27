@@ -265,6 +265,7 @@ int main(int argc, char** argv){
     uint8_t *tx_bin_buff = (uint8_t *)malloc(data_bits*sizeof(uint8_t)), *tx_bin_ptr;
     float ber = 0.0;
 
+    memset(error_count, 0, recvd_frms*sizeof(uint32_t));
     // generate first transmit frame
     pattern_LFSR_byte(PRBS11, tx_bin_buff, data_bits);
     // iterate over all received frames

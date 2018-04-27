@@ -10,18 +10,19 @@
 #include "ofdm.h"
 #include "kiss_fft.h"
 
-#define N_FRAMES 10010
+#define N_FRAMES 1010
 #define MAX_COUNT (1<<14)
+#define NANO 1000000000LL
 
 static real_t sync_sym[SYNC_SYM_LEN] = {0.0};
 static complex_t ifft_in_buff[N_FFT] = {{0.0}};
 static complex_t ifft_out_buff[N_FFT] = {{0.0}};
 static uint8_t gray_map[16] __attribute__((aligned(1))) = { 0, 1, 3, 2, 6, 7, 5, 4, 12, 13, 15, 14, 10, 11,  9,  8 };
 
-uint64_t GetTimeStamp(){
-    struct timeval tv;
-    gettimeofday(&tv,NULL);
-    return tv.tv_sec*(uint64_t)1000000+tv.tv_usec;
+
+// time difference in miliseconds
+static double timediff_ms(struct timespec *begin, struct timespec *end){
+    return (double)( (end->tv_sec - begin->tv_sec)*NANO + (end->tv_nsec - begin->tv_nsec) )/1000000;
 }
 
 void qam_mod(complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_sym){
@@ -208,7 +209,7 @@ int main(int argc, char **argv){
     if(rp_Init() != RP_OK)
         printf("Initialization Failed");
 
-    uint64_t start = 0, end=0;
+    struct timespec begin, end;
     real_t freq = 125e6/(16384*64);
     uint32_t period = round(1e6/freq), frm_num, i, pos;
     real_t tx_sig_ptr[ADC_BUFFER_SIZE]={0.0};
@@ -241,7 +242,7 @@ int main(int argc, char **argv){
     for(i=0; i<SYNC_SYM_LEN; i++)
         tx_sig_ptr[i] = sync_sym[i];
 
-    start = GetTimeStamp();
+    clock_gettime(CLOCK_MONOTONIC, &end);
 	for(frm_num=1; frm_num<=N_FRAMES; frm_num++){
         // get the read pointer position once to update from zero
         rp_GenGetReadPointer(&pos, RP_CH_2);
@@ -269,10 +270,9 @@ int main(int argc, char **argv){
 	}
     // wait for the last frame
     usleep(period);
-    // calculate total transmission time
-    end = GetTimeStamp()-start;
+    clock_gettime(CLOCK_MONOTONIC, &end);
     // publish the transmitted frames and total time
-    fprintf(stdout,"TX: Transmitted %d Frames in %lf ms\n", N_FRAMES, (double)end/1000);
+    fprintf(stdout,"TX: Transmitted %d Frames in %lf ms\n", N_FRAMES, timediff_ms(&begin, &end));
     // disable the DAC
     rp_GenOutDisable(RP_CH_2);
 

@@ -17,16 +17,14 @@
 #include "redpitaya/rp.h"
 #include <sys/stat.h>
 
-// amplitude adjustment done at the transmitter side
-#define AMP_ADJ 20
 // DC error of ADC
 #define DC_ERROR 0.015
 // number of frames to be received
-#define N_FRAMES 10000
+#define N_FRAMES 1000
 // constant for converting second to nano second
 #define NANO 1000000000LL
 // Duration of a frame in ms (8.39ms = exact duration)
-#define FRM_DUR 9
+#define FRM_DUR 8.5
 // Receive signal buffer size (should be power of 2 because of unsigned diff of indices later used in the program) )
 #define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
 // Whether or not to print traces (True only when DEBUG_INFOging, use smaller number of frames)
@@ -38,6 +36,7 @@ static double timediff_ms(struct timespec *begin, struct timespec *end){
     return (double)( (end->tv_sec - begin->tv_sec)*NANO + (end->tv_nsec - begin->tv_nsec) )/1000000;
 }
 
+FILE *trace_fp = NULL;
 #if DEBUG_INFO
 static float est_attn[N_FRAMES+1] = {0.0};
 static uint32_t sync_indices[N_FRAMES+1] = {0};
@@ -194,7 +193,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
     const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC;
-    const float  auto_corr_th = 0.01*(N_FFT*POST_DSF/2);
+    const float  auto_corr_th = 0.0001*(N_FFT*POST_DSF/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
@@ -213,7 +212,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
 
     #if TRACE_PRINT
     // log the receive index and number of samples received
-    fprintf(stdout,"RX: Sync/Demod Started, Demod Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
+    fprintf(trace_fp,"RX: Sync/Demod Started, Demod Index = %d, Received Samples = %d\n", demod_idx, samp_remng);
     #endif
 
     // check whether sync is completed or not
@@ -358,7 +357,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                 sync_corrected = 0;
                 max_of_min = 0;
                 #if TRACE_PRINT
-                fprintf(stdout,"RX: Demodulation Completed for Frame Num %d, Symbol Count = %d\n", frm_count, sym_count+demod_sym);
+                fprintf(trace_fp,"RX: Demodulation Completed for Frame Num %d, Symbol Count = %d\n", frm_count, sym_count+demod_sym);
                 #endif
             } else{
                 // if not demodulate all symbols contained within the received samples
@@ -467,9 +466,9 @@ int main(int argc, char** argv){
     // timing variables for checking process and receiving time (only needed when DEBUG_INFOging)
     struct timespec t1, t2, t3;
     // log file pointer
-//    char trace_file[255];
-  //  strftime(trace_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
-    //trace_fp = fopen(trace_file,"w+");
+    char trace_file[255];
+    strftime(trace_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
+    trace_fp = fopen(trace_file,"w+");
     #endif
 
     // check if valid RX address is acquired
@@ -517,7 +516,7 @@ int main(int argc, char** argv){
 
         #if TRACE_PRINT
         // log the acquisition details
-        fprintf(stdout,"RX: Recv Index = %d, Current pos = %d, Prev_pos = %d Receive Index = %d \n", recv_idx, curr_pos, prev_pos, recv_idx);
+        fprintf(trace_fp,"RX: Recv Index = %d, Current pos = %d, Prev_pos = %d Receive Index = %d \n", recv_idx, curr_pos, prev_pos, recv_idx);
         // calculate the acquisition time
         clock_gettime(CLOCK_MONOTONIC, &t2);
         #endif
@@ -551,7 +550,7 @@ int main(int argc, char** argv){
         #if TRACE_PRINT
         // calculate the data processing time
         clock_gettime(CLOCK_MONOTONIC, &t3);
-        fprintf(stdout,"RX: Read time = %lfms, Process time = %lfms, Received Bits = %d, Remaining Samples = %d\n", timediff_ms(&t1, &t2), timediff_ms(&t2, &t3), bits_recvd, samp_remng);
+        fprintf(trace_fp,"RX: Read time = %lfms, Process time = %lfms, Received Bits = %d, Remaining Samples = %d\n", timediff_ms(&t1, &t2), timediff_ms(&t2, &t3), bits_recvd, samp_remng);
         #endif
     }
 
@@ -587,6 +586,7 @@ int main(int argc, char** argv){
             if(error_count[i])
                 fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
+            missd_frms +=1;
             invalid_frms++;
             fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame = %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
         }
@@ -606,7 +606,7 @@ int main(int argc, char** argv){
     fclose(bin_fp);
 
     #if DEBUG_INFO
-    if(ber>0.0){
+    if(ber>0.0 || missd_frms>0){
         for(i = 0; i <recvd_frms; i++){
             fprintf(sync_fp," %d, %d, \t%lf, %lf, %lf, \t%lf\n", sync_indices[i]+616, sync_corr[i], dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
         }
