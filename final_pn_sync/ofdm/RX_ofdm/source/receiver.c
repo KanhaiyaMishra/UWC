@@ -17,8 +17,6 @@
 #include "redpitaya/rp.h"
 #include <sys/stat.h>
 
-// amplitude adjustment done at the transmitter side
-#define AMP_ADJ 20
 // DC error of ADC
 #define DC_ERROR 0.015
 // number of frames to be received
@@ -26,7 +24,7 @@
 // constant for converting second to nano second
 #define NANO 1000000000LL
 // Duration of a frame in ms (8.39ms = exact duration)
-#define FRM_DUR 9
+#define FRM_DUR 8.5
 // Receive signal buffer size (should be power of 2 because of unsigned diff of indices later used in the program) )
 #define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
 
@@ -168,7 +166,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
     const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC;
-    const float  auto_corr_th = 0.01*(N_FFT*POST_DSF/2);
+    const float  auto_corr_th = 0.0001*(N_FFT*POST_DSF/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
@@ -284,7 +282,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                         sync_err = N_FFT/4-i;
                     }
                 }
-                // confirm if the tap is actually dominant (for cases when sync_idx happens to be on the boundary of two samples, peak could be incorrect,
+                            // confirm if the tap is actually dominant (for cases when sync_idx happens to be on the boundary of two samples, peak could be incorrect,
                 // Either side peak of the maxima might share almost equal power), correct sync will be to move slightly(2 samples) towards that side peak
                 float l_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err-1]);
                 float r_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err+1]);
@@ -503,15 +501,59 @@ int main(int argc, char** argv){
             if(error_count[i])
                 fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
+            missd_frms +=1;
             invalid_frms++;
             fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame = %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
         }
         last_rx_frm = rx_frm_num;
     }
     ber = ber/(valid_frms*data_bits);
-    fprintf(stdout,"RX: Received total %d valid frames with BER = %f\n", valid_frms, ber);
+    fprintf(stdout,"\nRX: Calculating BER per received frame basis\n");
+    fprintf(stdout,"RX: Received total %d valid frames with BER1 = %f\n", valid_frms, ber);
     fprintf(stdout,"RX: Missed %d frames and received %d invalid frames\n", missd_frms, invalid_frms);
 
+    fprintf(stdout,"\nRX: Calculating BER assuming no frames are missed\n");
+    pattern_LFSR_reset();
+    generate_ofdm_sync();
+    memset(error_count, 0, recvd_frms*sizeof(uint32_t));
+    ber = 0;
+    // find a valid frm_num (1-10)
+    tx_frm_num=1;
+    rx_bin_ptr = rx_bin_buff;
+    tx_bin_ptr = tx_bin_buff;
+    pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
+    fprintf(stdout,"RX: Searching First valid received frame\n");
+    while(TRUE){
+        rx_frm_num = 0;
+        for(j=0; j<FRM_NUM_BITS; j++)
+            rx_frm_num |= (*(rx_bin_ptr++)<<j);
+        if(rx_frm_num<10){
+            fprintf(stdout,"RX: First valid received frame is %d\n", rx_frm_num);
+            break;
+        } else if(rx_bin_ptr-rx_bin_buff > 10*bits_per_frame){
+            rx_bin_ptr = rx_bin_buff+FRM_NUM_BITS;
+            fprintf(stdout,"RX: Could not find any valid frame, setting first valid frame to be 1\n");
+            rx_frm_num = 1;
+            break;
+        }
+        rx_bin_ptr += bits_per_frame;
+    }
+    while(tx_frm_num!=rx_frm_num){
+        pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
+        tx_frm_num++;
+    }
+    for (i=0; i<=(recvd_frms-rx_frm_num); i++){
+        for(j=0; j<(data_bits); j++)
+            error_count[i] += (*(tx_bin_ptr++) != *(rx_bin_ptr++));
+        rx_bin_ptr+= FRM_NUM_BITS;
+        tx_bin_ptr = tx_bin_buff;
+        ber += (double)error_count[i];
+        pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
+    }
+    ber = ber/(i*data_bits);
+    fprintf(stdout,"RX: Received total %d valid frames with BER2 = %f\n", i, ber);
+
+    // Save post-processed and online received data
     if(ber > 0.0){
         // save demodulated data
         for(i = 0; i <recvd_frms*bits_per_frame; i++){
