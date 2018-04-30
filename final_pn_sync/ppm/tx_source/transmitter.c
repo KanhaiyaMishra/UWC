@@ -24,9 +24,9 @@ static double timediff_ms(struct timespec *begin, struct timespec *end){
 }
 
 // initialize PPM sync sequence
-void ppm_init(float *ppm_tx){
+void ppm_tx_init(float *ppm_tx){
     int i,j;
-    prbs_gen_byte(PN_SEQ_TYPE, pn_seq_buff, PN_SEQ_LEN);
+    pattern_LFSR_byte(PN_SEQ_TYPE, pn_seq_buff, PN_SEQ_LEN);
     // insert the PN sequence (NRZ_OOK modulation)
     for( i=0; i<PN_SEQ_LEN; i++){
         for( j=0; j<OSF; j++){
@@ -87,7 +87,7 @@ int main(int argc, char **argv){
 	fprintf(stdout,"TX: Entered, DAC Address=%p\n", dac_add);
 
     //write the sync_sequence into the signal buffer
-    ppm_init(tx_sig_buff);
+    ppm_tx_init(tx_sig_buff);
 
     // set DAC output waveform parameters
     rp_GenWaveform(RP_CH_2, RP_WAVEFORM_ARBITRARY);
@@ -112,7 +112,7 @@ int main(int argc, char **argv){
         for(i=0; i<FRM_NUM_BITS; i++)
             tx_bin_buff[i] = ((frm_num>>i)&1);
         // Generate the prbs data
-		prbs_gen_byte(PRBS11, tx_bin_buff+FRM_NUM_BITS, n_bits_total-FRM_NUM_BITS);
+		pattern_LFSR_byte(PRBS11, tx_bin_buff+FRM_NUM_BITS, n_bits_total-FRM_NUM_BITS);
         // PPM modulation using prbs data
 		ppm_mod(tx_sig_buff+sync_len, tx_bin_buff);
         // Write the signal into the DAC buffer following the read pointer

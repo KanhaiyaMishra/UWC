@@ -8,11 +8,13 @@ RM = rm -f
 # local directory for ".h" header files
 INCDIR = ./include
 # local directory for ".c" source files
-SRCDIR = ./source
+CMNSRCDIR = ./common
+RXSRCDIR = ./rx_source
+TXSRCDIR = ./tx_source
 # local directory for ".o" output files
 OBJDIR = ./obj
 # local directory for the executable output file
-BINDIR = ../bin
+BINDIR = ./bin
 # shared library path
 LIBDIR = /root/RedPitaya/build
 # shared library header path
@@ -27,25 +29,39 @@ LDFLAGS =  -Wl,-rpath,$(LIBSO) -L$(LIBSO)
 # standard library dependencies
 LDLIBS = -lm -lpthread -lrp
 # output executable file name
-TARGET = $(BINDIR)/ppm_tx
+TARGET1 = $(BINDIR)/ofdm_tx
+TARGET2 = $(BINDIR)/ofdm_rx
 
 # get the ".o" names from the source files
-SOURCES = $(wildcard $(SRCDIR)/*.c)
-OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+TXSRC = $(wildcard $(TXSRCDIR)/*.c)
+RXSRC = $(wildcard $(RXSRCDIR)/*.c)
+CMNSRC = $(wildcard $(CMNSRCDIR)/*.c)
+TXOBJ = $(TXSRC:$(TXSRCDIR)/%.c=$(OBJDIR)/%.o)
+RXOBJ = $(RXSRC:$(RXSRCDIR)/%.c=$(OBJDIR)/%.o)
+CMNOBJ = $(CMNSRC:$(CMNSRCDIR)/%.c=$(OBJDIR)/%.o)
 
 ##------------main makefile script--------------##
-all: $(TARGET)
+all: $(TARGET1) $(TARGET2)
 
 # Linking
-$(TARGET): $(OBJECTS)
+$(TARGET1): $(TXOBJ) $(CMNOBJ)
+	$(LD) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+$(TARGET2): $(RXOBJ) $(CMNOBJ)
 	$(LD) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 # compiling
-$(OBJECTS): $(OBJDIR)/%.o: $(SRCDIR)/%.c
+$(TXOBJ): $(OBJDIR)/%.o: $(TXSRCDIR)/%.c
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(RXOBJ): $(OBJDIR)/%.o: $(RXSRCDIR)/%.c
+	$(CC) -c $(CFLAGS) $< -o $@
+
+$(CMNOBJ): $(OBJDIR)/%.o: $(CMNSRCDIR)/%.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
 # cleaning
 .PHONY: clean
 clean:
-	$(RM) $(OBJECTS)
+	$(RM) $(TXOBJ) $(RXOBJ) $(CMNOBJ)
 ##-----------main makefile script--------------##

@@ -40,7 +40,7 @@ static double timediff_ms(struct timespec *begin, struct timespec *end){
 }
 
 // intilialize the demodulator
-void ppm_init(){
+void ppm_rx_init(){
     int i;
     uint32_t *temp = indices;
     // generate pn-sequence and save it in a variable
@@ -161,7 +161,7 @@ int main(int argc, char** argv){
     int32_t i, j, adc_counts=0;
 
     // initialize sync_sequence to get correlation value
-    ppm_init();
+    ppm_rx_init();
     // timing variables
     struct timespec begin, end;
 
@@ -169,17 +169,17 @@ int main(int argc, char** argv){
     time_t now = time(NULL);
     char log_dir[255], ber_file[255], bin_file[255];
 
-    strftime(log_dir, 255,"../log/PPM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
+    strftime(log_dir, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
     mkdir(log_dir, 0777);
-    strftime(bin_file, 255,"../log/PPM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
-    strftime(ber_file, 255,"../log/PPM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
+    strftime(bin_file, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
+    strftime(ber_file, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
     bin_fp = fopen(bin_file,"w+");
     ber_fp = fopen(ber_file,"w+");
 
     #if TRACE_PRINT
     struct timespec t1, t2, t3;
     char log_dir[255], ber_file[255], bin_file[255], sig_file[255];
-    strftime(trace_file, 255,"../log/PPM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
+    strftime(trace_file, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
     trace_fp = fopen(trace_file,"w+");
     #endif
 
@@ -311,7 +311,7 @@ int main(int argc, char** argv){
 
     fprintf(stdout,"\nRX: Calculating BER assuming no frames are missed\n");
     pattern_LFSR_reset();
-    ppm_init();
+    ppm_rx_init();
     memset(error_count, 0, recvd_frms*sizeof(uint32_t));
     ber = 0;
     // find a valid frm_num (1-10)
