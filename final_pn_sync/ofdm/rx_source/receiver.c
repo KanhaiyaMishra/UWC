@@ -20,16 +20,16 @@
 // DC error of ADC
 #define DC_ERROR 0.015
 // number of frames to be received
-#define N_FRAMES 1000
+#define N_FRAMES 10
 // constant for converting second to nano second
 #define NANO 1000000000LL
 // Duration of a frame in ms (8.39ms = exact duration)
-#define FRM_DUR 8.5
+#define FRM_DUR 8.4
 // Receive signal buffer size (should be power of 2 because of unsigned diff of indices later used in the program) )
-#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
+#define RX_BUFF_SIZE (64*ADC_BUFFER_SIZE)
 // Whether or not to print traces (True only when DEBUG_INFOging, use smaller number of frames)
 #define TRACE_PRINT FALSE
-#define DEBUG_INFO FALSE
+#define DEBUG_INFO TRUE
 
 // time difference in miliseconds
 static double timediff_ms(struct timespec *begin, struct timespec *end){
@@ -193,7 +193,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
     const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC;
-    const float  auto_corr_th = 0.0001*(N_FFT*POST_DSF/2);
+    const float  auto_corr_th = 0.01*(N_FFT*POST_DSF/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
@@ -206,9 +206,17 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
     // Dequeue holds: base add of a static 'pair' array, front and rear index of within in the queue
     dequeue window;
 
+    uint32_t min_samp = OSF*N_FFT;
     idx1 = demod_idx;
     idx2 = (demod_idx+N_FFT*OSF/2)%RX_BUFF_SIZE;
     idx3 = (demod_idx+N_FFT*OSF)%RX_BUFF_SIZE;
+    #ifdef FLIP_OFDM
+    uint32_t idx4=0, idx5=0, idx6=0;
+    idx4 = (idx1+SYNC_SYM_LEN/2)%RX_BUFF_SIZE;
+    idx5 = (idx2+SYNC_SYM_LEN/2)%RX_BUFF_SIZE;
+    idx6 = (idx3+SYNC_SYM_LEN/2)%RX_BUFF_SIZE;
+    min_samp += SYNC_SYM_LEN/2;
+    #endif
 
     #if TRACE_PRINT
     // log the receive index and number of samples received
@@ -226,11 +234,18 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
             memset(queue, 0, (win_len+2)*(sizeof(float)+sizeof(int)));
             initialize(&window, queue, (win_len+2) );
             // make sure received samples are more than correlation window
-            if(samp_remng >= OSF*N_FFT){
+            if(samp_remng >= min_samp){
                 // compute cross and auto correlation at first receive index
                 for (int i=0; i<corr_len; i++){
+                    #ifdef DCO_OFDM
                     auto_corr += rx_sig_buff[(idx2+i*PRE_DSF)%RX_BUFF_SIZE]*rx_sig_buff[(idx2+i*PRE_DSF)%RX_BUFF_SIZE];
                     cros_corr += rx_sig_buff[(idx1+i*PRE_DSF)%RX_BUFF_SIZE]*rx_sig_buff[(idx2+i*PRE_DSF)%RX_BUFF_SIZE];
+                    #elif defined(FLIP_OFDM)
+                    auto_corr += ( (rx_sig_buff[(idx2+i*PRE_DSF)%RX_BUFF_SIZE] - rx_sig_buff[(idx5+i*PRE_DSF)%RX_BUFF_SIZE])
+                                 * (rx_sig_buff[(idx2+i*PRE_DSF)%RX_BUFF_SIZE] - rx_sig_buff[(idx5+i*PRE_DSF)%RX_BUFF_SIZE]));
+                    cros_corr += ( (rx_sig_buff[(idx1+i*PRE_DSF)%RX_BUFF_SIZE] - rx_sig_buff[(idx4+i*PRE_DSF)%RX_BUFF_SIZE])
+                                 * (rx_sig_buff[(idx2+i*PRE_DSF)%RX_BUFF_SIZE] - rx_sig_buff[(idx5+i*PRE_DSF)%RX_BUFF_SIZE]));
+                    #endif
                 }
                 // compute the corellation factor (absolute ration of cross and auto correlation)
                 corr_fact = fabs(cros_corr/auto_corr);
@@ -239,7 +254,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
         }
         if(corr_count>=0){
             // compute correlation for forward indices untill remaining samples are less than required by correlation
-            for( ;samp_remng > OSF*N_FFT; samp_remng-=PRE_DSF) {
+            for( ;samp_remng > min_samp; samp_remng-=PRE_DSF) {
                 // auto correlation threshold (diff noise from pilot), corr fact threshold (reduces uncessary computation when pilot is yet present)
                 // start computing window minimum once thresholds are crossed
                 if( auto_corr > auto_corr_th && corr_fact>0.3 ){
@@ -270,14 +285,26 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                     }
                 }
                 // compute correlation values for next index
+                #ifdef DCO_OFDM
                 auto_corr = auto_corr + rx_sig_buff[idx3]*rx_sig_buff[idx3] - rx_sig_buff[idx2]*rx_sig_buff[idx2];
                 cros_corr = cros_corr + rx_sig_buff[idx2]*rx_sig_buff[idx3] - rx_sig_buff[idx1]*rx_sig_buff[idx2];
+                #elif defined(FLIP_OFDM)
+                auto_corr = auto_corr + (rx_sig_buff[idx3]-rx_sig_buff[idx6])*(rx_sig_buff[idx3]-rx_sig_buff[idx6])
+                                      - (rx_sig_buff[idx2]-rx_sig_buff[idx5])*(rx_sig_buff[idx2]-rx_sig_buff[idx5]);
+                cros_corr = cros_corr + (rx_sig_buff[idx2]-rx_sig_buff[idx5])*(rx_sig_buff[idx3]-rx_sig_buff[idx6])
+                                      - (rx_sig_buff[idx1]-rx_sig_buff[idx4])*(rx_sig_buff[idx2]-rx_sig_buff[idx5]);
+                #endif
                 corr_fact = fabs(cros_corr/auto_corr);
                 // increase the correlation count and advance the index (partial downsampling)
                 corr_count++;
                 idx1 = (idx1 + PRE_DSF)%RX_BUFF_SIZE;
                 idx2 = (idx2 + PRE_DSF)%RX_BUFF_SIZE;
                 idx3 = (idx3 + PRE_DSF)%RX_BUFF_SIZE;
+                #ifdef FLIP_OFDM
+                idx4 = (idx1+SYNC_SYM_LEN/2)%RX_BUFF_SIZE;
+                idx5 = (idx2+SYNC_SYM_LEN/2)%RX_BUFF_SIZE;
+                idx6 = (idx3+SYNC_SYM_LEN/2)%RX_BUFF_SIZE;
+                #endif
             }
         }
     }
@@ -328,7 +355,11 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                 } else
                     error = sync_err*OSF;
 
+                #ifdef DCO_OFDM
                 ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/max_coef):ch_attn;
+                #elif defined(FLIP_OFDM)
+                ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/max_coef/4):ch_attn;
+                #endif
 
                 #if DEBUG_INFO
                 sync_corr[frm_count-1] = error;
@@ -370,9 +401,9 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
 	        for(int j=0; j<demod_sym; j++){
                 // downsample the received data
                 for( int i=0; i< N_FFT; i++){
-	    	    #ifdef FLIP
-                        fft_in[i].r = rx_sig_buff[(demod_idx + i*OSF)%RX_BUFF_SIZE] - rx_sig_buff[(demod_idx + DATA_SYM_LEN + i*OSF)%RX_BUFF_SIZE];
-	    	    #elif defined(DCO)
+	    	    #ifdef FLIP_OFDM
+                        fft_in[i].r = rx_sig_buff[(demod_idx + i*OSF)%RX_BUFF_SIZE] - rx_sig_buff[(demod_idx + DATA_SYM_LEN/2 + i*OSF)%RX_BUFF_SIZE];
+	    	    #elif defined(DCO_OFDM)
                         fft_in[i].r = rx_sig_buff[(demod_idx + i*OSF)%RX_BUFF_SIZE];
                 #endif
                 }
@@ -385,11 +416,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                 demod_idx = (demod_idx + DATA_SYM_LEN)%RX_BUFF_SIZE;
                 // get bin buffer pointer for next symbol
                 bin_rx += N_QAM*N_BITS;
-                // FLIP decodes two ofdm symbols together, so advance pointer once more
-                #if defined(FLIP)
-                    demod_idx = (demod_idx + DATA_SYM_LEN)%RX_BUFF_SIZE;
-                    j++;
-                #endif
 	        }
 
             // increase the current symbol count for the frame by #demod symbols
@@ -401,7 +427,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
             // free fft configuration variables
             kiss_fft_free(fft_cfg);
             // recursive call at the end of each frame when there are enough samples remaining for synchronization and/or demodulation
-            if( sym_count==N_SYM && samp_remng >= (OSF*N_FFT)){
+            if( sym_count==N_SYM && samp_remng >= min_samp){
                 uint32_t new_bits = 0;
                 samp_remng = ofdm_demod(bin_rx, demod_idx, samp_remng, &new_bits);
                 demod_sym += (new_bits/(N_QAM*N_BITS));
@@ -444,19 +470,19 @@ int main(int argc, char** argv){
     FILE *bin_fp, *ber_fp;
     char log_dir[255], ber_file[255], bin_file[255];
 
-    strftime(log_dir, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
+    strftime(log_dir, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
     mkdir(log_dir, 0777);
-    strftime(bin_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
-    strftime(ber_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
+    strftime(bin_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
+    strftime(ber_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
     bin_fp = fopen(bin_file,"w+");
     ber_fp = fopen(ber_file,"w+");
 
     #if DEBUG_INFO
     FILE *sig_fp, *qam_fp, *sync_fp;
     char sig_file[255], qam_file[255], sync_file[255];
-    strftime(qam_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/qam.txt",gmtime(&now));
-    strftime(sync_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/sync.txt",gmtime(&now));
-    strftime(sig_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
+    strftime(qam_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/qam.txt",gmtime(&now));
+    strftime(sync_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/sync.txt",gmtime(&now));
+    strftime(sig_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
     qam_fp = fopen(qam_file,"w+");
     sync_fp = fopen(sync_file,"w+");
     sig_fp = fopen(sig_file,"w+");
@@ -467,7 +493,7 @@ int main(int argc, char** argv){
     struct timespec t1, t2, t3;
     // log file pointer
     char trace_file[255];
-    strftime(trace_file, 255,"../log/OFDM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
+    strftime(trace_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
     trace_fp = fopen(trace_file,"w+");
     #endif
 
@@ -554,6 +580,7 @@ int main(int argc, char** argv){
         #endif
     }
 
+    if(recvd_frms>0){
     // BER Evaluation Variables: Last recvd frame, RX and TX Frame numbers, loop counters, missed, valid, invalid, zero_ber frame counts, frm diff between last and latest RX frame
     uint32_t error_count[recvd_frms], last_rx_frm =0, rx_frm_num, tx_frm_num = 1, i ,j, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
     uint8_t *tx_bin_buff = (uint8_t *)malloc(data_bits*sizeof(uint8_t));
@@ -623,7 +650,7 @@ int main(int argc, char** argv){
         }
         rx_bin_ptr += bits_per_frame;
     }
-    while(tx_frm_num!=rx_frm_num){
+    while(tx_frm_num!=rx_frm_num && rx_frm_num>=1){
         pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
         tx_frm_num++;
     }
@@ -637,7 +664,6 @@ int main(int argc, char** argv){
     }
     ber = ber/(i*data_bits);
     fprintf(stdout,"RX: Received total %d valid frames with BER2 = %f\n", i, ber);
-
     // Save post-processed and online received data
     if(ber > 0.0){
         // save demodulated data
@@ -645,11 +671,9 @@ int main(int argc, char** argv){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
         }
     }
-    fclose(ber_fp);
-    fclose(bin_fp);
 
     #if DEBUG_INFO
-    if(ber>0.0 || missd_frms>0){
+//    if(ber>0.0 || missd_frms>0){
         for(i = 0; i <recvd_frms; i++){
             fprintf(sync_fp," %d, %d, \t%lf, %lf, %lf, \t%lf\n", sync_indices[i]+616, sync_corr[i], dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
         }
@@ -660,7 +684,14 @@ int main(int argc, char** argv){
         for(i = 0; i <recv_idx; i++){
             fprintf(sig_fp," %f \n", rx_sig_buff[i]);
         }
+//    }
+    #endif
     }
+
+    fclose(ber_fp);
+    fclose(bin_fp);
+
+    #if DEBUG_INFO
     // close files
     fclose(qam_fp);
     fclose(sync_fp);
@@ -668,7 +699,7 @@ int main(int argc, char** argv){
     #endif
 
     #if TRACE_PRINT
-    fclose(stdout);
+    fclose(trace_fp);
     #endif
 
     // Stop acquisition and release resources

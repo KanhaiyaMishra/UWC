@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include <deque.h>
+#include "deque.h"
 
 void initialize(dequeue *P, pair *queue, int size)
 {
