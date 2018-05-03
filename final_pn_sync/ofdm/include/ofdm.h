@@ -9,6 +9,9 @@
 typedef kiss_fft_cpx complex_t;
 typedef kiss_fft_scalar real_t;
 
+#define THRESHOLD (0.000001)
+#define PWR_ADJ 10000.0
+
 #define OSF 8               // TX over sampling factor
 #define PRE_DSF 2           // RX downsampling before synchronization
 #define POST_DSF 4          // RX downsampling after synchronization
@@ -30,6 +33,15 @@ typedef kiss_fft_scalar real_t;
 #define SYNC_SYM_LEN 1232    // OFDM Sync Symbol: (64+13)*8 samples
 #define DATA_SYM_LEN 1168    // OFDM Data Symbol: (64+9)*8 samples
 #endif
+
+#define FRM_DUR 8.5
+#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
+#define N_FRAMES 10000
+#define DC_ERROR 0.015
+#define NANO 1000000000LL
+#define MAX_COUNT (1<<14)
+#define DEBUG_INFO FALSE
+#define TRACE_PRINT FALSE
 
 /*! Each OFDM Symbol contains one OFDM Symbol carrying Synchronization Information
 DCO OFDM - length of symbol is (N_FFT+N_CP)

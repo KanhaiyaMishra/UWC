@@ -10,10 +10,6 @@
 #include "ofdm.h"
 #include "kiss_fft.h"
 
-#define N_FRAMES 10
-#define MAX_COUNT (1<<14)
-#define NANO 1000000000LL
-
 //static real_t sync_seq[SYNC_SYM_LEN] = {0.0};
 static complex_t ifft_in_buff[N_FFT] = {{0.0}};
 static complex_t ifft_out_buff[N_FFT] = {{0.0}};
@@ -35,7 +31,7 @@ void qam_mod(complex_t *qam_data, uint8_t *bin_data, uint8_t is_sync_seq){
     // Nomalization constant for getting average unit power per ofdm symbol
     // Avg Energy = 2*(M_QAM - 1)/3), #QAM per OFDM Sym = N_DSC (N_DSC/2 for sync)
     // Extra factor of 4 to get Vpp less than 2 (DAC Amplitude Limitation)
-    real_t norm_const = 1/sqrt( 20*2*(M_QAM - 1)/3*N_DSC/(1+is_sync_seq) );
+    real_t norm_const = 1/sqrt( PWR_ADJ*2*(M_QAM - 1)/3*N_DSC/(1+is_sync_seq) );
 
     // get the header and tail pointers of the output buffer
     // OFDM Sym = [ DC QAM[N_DSC] Zeros[N_FFT-N_DSC-1] conj(flip(QAM[N_DSC]))]

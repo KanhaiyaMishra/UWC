@@ -17,20 +17,6 @@
 #include "redpitaya/rp.h"
 #include <sys/stat.h>
 
-// DC error of ADC
-#define DC_ERROR 0.015
-// number of frames to be received
-#define N_FRAMES 10
-// constant for converting second to nano second
-#define NANO 1000000000LL
-// Duration of a frame in ms (8.39ms = exact duration)
-#define FRM_DUR 8.4
-// Receive signal buffer size (should be power of 2 because of unsigned diff of indices later used in the program) )
-#define RX_BUFF_SIZE (64*ADC_BUFFER_SIZE)
-// Whether or not to print traces (True only when DEBUG_INFOging, use smaller number of frames)
-#define TRACE_PRINT FALSE
-#define DEBUG_INFO TRUE
-
 // time difference in miliseconds
 static double timediff_ms(struct timespec *begin, struct timespec *end){
     return (double)( (end->tv_sec - begin->tv_sec)*NANO + (end->tv_nsec - begin->tv_nsec) )/1000000;
@@ -41,13 +27,14 @@ FILE *trace_fp = NULL;
 static float est_attn[N_FRAMES+1] = {0.0};
 static uint32_t sync_indices[N_FRAMES+1] = {0};
 static uint32_t sync_corr[N_FRAMES+1] = {0};
+static double sync_fact[3][N_FRAMES+1] = {{0}};
 static double dom_tap[3][N_FRAMES+1] = {{0}};
 static complex_t qam_raw_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
 static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
 #endif
 
 // sync symbol buffer
-float ch_attn = 20;
+float ch_attn = 20000;
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 // FFT Input / Output Buffers (TBD: Check for performance enhancement with global static allocation vs local dynamic allocation)
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
@@ -193,7 +180,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
     const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC;
-    const float  auto_corr_th = 0.01*(N_FFT*POST_DSF/2);
+    const float  auto_corr_th = THRESHOLD*(N_FFT*POST_DSF/2);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
@@ -271,10 +258,14 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                         max_of_min = window.base_ptr[window.front].value;
                         // for current index, algorithm calculates window minimum for the index one window behind
                         sync_idx = (idx1 - (win_len*PRE_DSF))%RX_BUFF_SIZE;
-                    }else if (window.base_ptr[window.front].value < 0.6*max_of_min){
                         #if DEBUG_INFO
+                        // save sync parameters for debugging
                         sync_indices[frm_count] = sync_idx;
+                        sync_fact[0][frm_count] = max_of_min;
+                        sync_fact[1][frm_count] = auto_corr;
+                        sync_fact[2][frm_count] = cros_corr;
                         #endif
+                    }else if (window.base_ptr[window.front].value < 0.6*max_of_min){
                         frm_count++;
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
                         sync_done = 1;
@@ -536,8 +527,8 @@ int main(int argc, char** argv){
 //	    rp_AcqGetDataV_WA(RP_CH_2, prev_pos, &samp_recvd, rx_sig_buff, recv_idx, RX_BUFF_SIZE );
         for (int i =0; i<samp_recvd; i++){
             adc_counts = ( adc_add[(prev_pos+i)%ADC_BUFFER_SIZE] & 0x3FFF );
-            adc_counts = ( (adc_counts < (1<<13)) ? adc_counts : (adc_counts - (1<<14)) );
-            rx_sig_buff[(recv_idx+i)%RX_BUFF_SIZE] = ((double)adc_counts)/(1<<13) + DC_ERROR;
+            adc_counts = ( (adc_counts < (MAX_COUNT/2)) ? adc_counts : (adc_counts - MAX_COUNT) );
+            rx_sig_buff[(recv_idx+i)%RX_BUFF_SIZE] = ((double)adc_counts)/(MAX_COUNT/2) + DC_ERROR;
         }
 
         #if TRACE_PRINT
@@ -587,11 +578,12 @@ int main(int argc, char** argv){
     uint8_t *tx_bin_ptr;
     float ber = 0.0;
 
+    rx_bin_ptr = rx_bin_buff;
     memset(error_count, 0, recvd_frms*sizeof(uint32_t));
     pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
     for(i=0; i<recvd_frms; i++){
         tx_bin_ptr = tx_bin_buff;
-        rx_bin_ptr = rx_bin_buff+i*bits_per_frame;
+        rx_bin_ptr = rx_bin_buff + i*bits_per_frame;
         rx_frm_num = 0;
         for(j=0; j<FRM_NUM_BITS; j++)
             rx_frm_num |= (*(rx_bin_ptr++)<<j);
@@ -599,6 +591,7 @@ int main(int argc, char** argv){
         frm_diff = rx_frm_num - last_rx_frm;
 
         if ( frm_diff <= 5 && frm_diff >= 1 ){
+
             while(rx_frm_num >= tx_frm_num) {
                 if(rx_frm_num==tx_frm_num){
                     for(j=0; j<(data_bits); j++)
@@ -607,13 +600,14 @@ int main(int argc, char** argv){
                 pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
                 tx_frm_num++;
             }
+
             valid_frms +=1;
             missd_frms += (frm_diff-1);
             ber += (double)error_count[i];
             if(error_count[i])
                 fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
-            missd_frms +=1;
+             missd_frms +=1;
             invalid_frms++;
             fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame = %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
         }
@@ -639,16 +633,16 @@ int main(int argc, char** argv){
         rx_frm_num = 0;
         for(j=0; j<FRM_NUM_BITS; j++)
             rx_frm_num |= (*(rx_bin_ptr++)<<j);
-        if(rx_frm_num<10){
+        if(rx_frm_num<20){
             fprintf(stdout,"RX: First valid received frame is %d\n", rx_frm_num);
             break;
-        } else if(rx_bin_ptr-rx_bin_buff > 10*bits_per_frame){
+        } else if(rx_bin_ptr-rx_bin_buff > 20*bits_per_frame){
             rx_bin_ptr = rx_bin_buff+FRM_NUM_BITS;
             fprintf(stdout,"RX: Could not find any valid frame, setting first valid frame to be 1\n");
             rx_frm_num = 1;
             break;
         }
-        rx_bin_ptr += bits_per_frame;
+        rx_bin_ptr += data_bits;
     }
     while(tx_frm_num!=rx_frm_num && rx_frm_num>=1){
         pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
@@ -675,7 +669,8 @@ int main(int argc, char** argv){
     #if DEBUG_INFO
 //    if(ber>0.0 || missd_frms>0){
         for(i = 0; i <recvd_frms; i++){
-            fprintf(sync_fp," %d, %d, \t%lf, %lf, %lf, \t%lf\n", sync_indices[i]+616, sync_corr[i], dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
+            fprintf(sync_fp," %d, %d, \t%lf, \t%lf, \t%lf, \t%lf", sync_indices[i]+616, sync_corr[i], dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
+            fprintf(sync_fp," \t%lf, \t%lf, \t%lf\n", sync_fact[0][i], sync_fact[1][i], sync_fact[2][i]);
         }
         for(i = 0; i <recvd_frms*N_SYM*N_QAM; i++){
             fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
