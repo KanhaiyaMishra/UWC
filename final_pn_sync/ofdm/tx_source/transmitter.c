@@ -103,7 +103,7 @@ void ofdm_mod(real_t *ofdm_tx_cp, uint8_t *bin_tx) {
             // oversampling the output
             for( int k=0; k<OSF; k++){
             #ifdef DCO_OFDM
-                *ofdm_tx++ = ifft_out->r;
+                *ofdm_tx++ = -ifft_out->r;
             #elif defined(FLIP_OFDM)
                 // flip ofdm +ve and -ve symbol separation
                 if (ifft_out->r < 0.0)

@@ -9,15 +9,16 @@
 typedef kiss_fft_cpx complex_t;
 typedef kiss_fft_scalar real_t;
 
-#define THRESHOLD (0.000001)
-#define PWR_ADJ 10000.0
+#define THRESHOLD (0.001)
+#define PWR_ADJ 20.0
 
+#define RX_PWR_ADJ 300
 #define OSF 8               // TX over sampling factor
 #define PRE_DSF 2           // RX downsampling before synchronization
 #define POST_DSF 4          // RX downsampling after synchronization
 #define DCO_OFDM            // OFDM Type: DCO/FLIP
-#define M_QAM 16            // QAM order
-#define N_BITS 4            // bits per qam symbol
+#define M_QAM 4            // QAM order
+#define N_BITS 2            // bits per qam symbol
 #define N_FFT 64            // Total Subcarriers (FFT Size)
 #define N_DSC 52            // Data Subcarriers
 #define N_QAM 26            // qam syms per ofdm symbol
@@ -35,13 +36,20 @@ typedef kiss_fft_scalar real_t;
 #endif
 
 #define FRM_DUR 8.5
-#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
-#define N_FRAMES 10000
+#define RX_DELAY 100000
+#define N_FRAMES 1000
+#define RUN_TIME ((N_FRAMES*FRM_DUR+40))
 #define DC_ERROR 0.015
 #define NANO 1000000000LL
 #define MAX_COUNT (1<<14)
-#define DEBUG_INFO FALSE
+#define DEBUG_INFO TRUE
 #define TRACE_PRINT FALSE
+
+#if DEBUG_INFO
+#define RX_BUFF_SIZE ((N_FRAMES+20)*ADC_BUFFER_SIZE)
+#else
+#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
+#endif
 
 /*! Each OFDM Symbol contains one OFDM Symbol carrying Synchronization Information
 DCO OFDM - length of symbol is (N_FFT+N_CP)

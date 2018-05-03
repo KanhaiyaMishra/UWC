@@ -34,7 +34,7 @@ static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
 #endif
 
 // sync symbol buffer
-float ch_attn = 20000;
+float ch_attn = RX_PWR_ADJ;
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 // FFT Input / Output Buffers (TBD: Check for performance enhancement with global static allocation vs local dynamic allocation)
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
@@ -492,8 +492,7 @@ int main(int argc, char** argv){
     fprintf(stdout, "RX: Entered, Address = %p, adc_counts = %d\n", adc_add, adc_counts);
     // generate the pilots for synchronization error correction exactly same as in Transmit Program
     generate_ofdm_sync();
-    // wait till transmission is started
-    usleep(100000);
+    usleep(RX_DELAY);
     // reset the ADC
     rp_AcqReset();
     // set the ADC sample rate (125e6/decimation)
@@ -507,7 +506,7 @@ int main(int argc, char** argv){
     // start the acquisition
     rp_AcqStart();
     // small wait till ADC has acquired some data
-    usleep(10000);
+    usleep(1000);
 
     clock_gettime(CLOCK_MONOTONIC, &begin);
     // continue recieving untill receive signal buffer gets filled
@@ -554,7 +553,7 @@ int main(int argc, char** argv){
         // get the current clock time to determine whether or not to stop
         clock_gettime(CLOCK_MONOTONIC, &end);
         // check if all frames are received or Time is over (avoid infinite loop, in case all frames were not received)
-        if(rx_bin_ptr > rx_bin_end || timediff_ms(&begin, &end)> ((N_FRAMES+1)*FRM_DUR) ){
+        if(rx_bin_ptr > rx_bin_end || timediff_ms(&begin, &end)> RUN_TIME ){
             // Calculate the number of frames received
             recvd_frms = ( (rx_bin_ptr - rx_bin_buff)/sizeof(uint8_t) )/bits_per_frame;
             if (rx_bin_ptr > rx_bin_end)
@@ -572,8 +571,8 @@ int main(int argc, char** argv){
     }
 
     if(recvd_frms>0){
-    // BER Evaluation Variables: Last recvd frame, RX and TX Frame numbers, loop counters, missed, valid, invalid, zero_ber frame counts, frm diff between last and latest RX frame
-    uint32_t error_count[recvd_frms], last_rx_frm =0, rx_frm_num, tx_frm_num = 1, i ,j, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
+    // BER Evaluation Variables: RX and TX Frame numbers, loop counters, missed, valid, invalid, zero_ber frame counts, frm diff between last and latest RX frame
+    uint32_t error_count[recvd_frms], rx_frm_num, tx_frm_num = 1, i ,j, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
     uint8_t *tx_bin_buff = (uint8_t *)malloc(data_bits*sizeof(uint8_t));
     uint8_t *tx_bin_ptr;
     float ber = 0.0;
@@ -588,9 +587,9 @@ int main(int argc, char** argv){
         for(j=0; j<FRM_NUM_BITS; j++)
             rx_frm_num |= (*(rx_bin_ptr++)<<j);
 
-        frm_diff = rx_frm_num - last_rx_frm;
+        frm_diff = rx_frm_num - tx_frm_num;
 
-        if ( frm_diff <= 5 && frm_diff >= 1 ){
+        if ( frm_diff <= 10 && frm_diff >= 0 ){
 
             while(rx_frm_num >= tx_frm_num) {
                 if(rx_frm_num==tx_frm_num){
@@ -602,16 +601,17 @@ int main(int argc, char** argv){
             }
 
             valid_frms +=1;
-            missd_frms += (frm_diff-1);
+            missd_frms += frm_diff;
             ber += (double)error_count[i];
             if(error_count[i])
                 fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
-             missd_frms +=1;
+            pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
+            tx_frm_num++;
+            missd_frms +=1;
             invalid_frms++;
             fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame = %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
         }
-        last_rx_frm = rx_frm_num;
     }
     ber = ber/(valid_frms*data_bits);
     fprintf(stdout,"\nRX: Calculating BER per received frame basis\n");
@@ -633,10 +633,10 @@ int main(int argc, char** argv){
         rx_frm_num = 0;
         for(j=0; j<FRM_NUM_BITS; j++)
             rx_frm_num |= (*(rx_bin_ptr++)<<j);
-        if(rx_frm_num<20){
+        if(rx_frm_num<100){
             fprintf(stdout,"RX: First valid received frame is %d\n", rx_frm_num);
             break;
-        } else if(rx_bin_ptr-rx_bin_buff > 20*bits_per_frame){
+        } else if(rx_bin_ptr-rx_bin_buff > 100*bits_per_frame){
             rx_bin_ptr = rx_bin_buff+FRM_NUM_BITS;
             fprintf(stdout,"RX: Could not find any valid frame, setting first valid frame to be 1\n");
             rx_frm_num = 1;
@@ -644,7 +644,8 @@ int main(int argc, char** argv){
         }
         rx_bin_ptr += data_bits;
     }
-    while(tx_frm_num!=rx_frm_num && rx_frm_num>=1){
+    if(rx_frm_num>=1){
+    while(tx_frm_num!=rx_frm_num){
         pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
         tx_frm_num++;
     }
@@ -658,6 +659,9 @@ int main(int argc, char** argv){
     }
     ber = ber/(i*data_bits);
     fprintf(stdout,"RX: Received total %d valid frames with BER2 = %f\n", i, ber);
+    }
+    #if DEBUG_INFO
+//    if(ber>0.0 || missd_frms>0){
     // Save post-processed and online received data
     if(ber > 0.0){
         // save demodulated data
@@ -665,20 +669,17 @@ int main(int argc, char** argv){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
         }
     }
-
-    #if DEBUG_INFO
-//    if(ber>0.0 || missd_frms>0){
-        for(i = 0; i <recvd_frms; i++){
-            fprintf(sync_fp," %d, %d, \t%lf, \t%lf, \t%lf, \t%lf", sync_indices[i]+616, sync_corr[i], dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
-            fprintf(sync_fp," \t%lf, \t%lf, \t%lf\n", sync_fact[0][i], sync_fact[1][i], sync_fact[2][i]);
-        }
-        for(i = 0; i <recvd_frms*N_SYM*N_QAM; i++){
-            fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
-            fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
-        }
-        for(i = 0; i <recv_idx; i++){
-            fprintf(sig_fp," %f \n", rx_sig_buff[i]);
-        }
+    for(i = 0; i <recvd_frms; i++){
+        fprintf(sync_fp," %d, %d, \t%lf, \t%lf, \t%lf, \t%lf", sync_indices[i]+616, sync_corr[i], dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
+        fprintf(sync_fp," \t%lf, \t%lf, \t%lf\n", sync_fact[0][i], sync_fact[1][i], sync_fact[2][i]);
+    }
+    for(i = 0; i <recvd_frms*N_SYM*N_QAM; i++){
+        fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
+        fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
+    }
+    for(i = 0; i <recv_idx; i++){
+        fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+    }
 //    }
     #endif
     }
