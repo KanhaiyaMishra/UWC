@@ -61,7 +61,10 @@ $(CMNOBJ): $(OBJDIR)/%.o: $(CMNSRCDIR)/%.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
 # cleaning
-.PHONY: clean
+.PHONY: clean again
 clean:
 	$(RM) $(TXOBJ) $(RXOBJ) $(CMNOBJ)
+again:
+	$(RM) $(TXOBJ) $(RXOBJ)
+	make
 ##-----------main makefile script--------------##

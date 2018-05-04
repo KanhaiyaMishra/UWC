@@ -103,7 +103,7 @@ void ofdm_mod(real_t *ofdm_tx_cp, uint8_t *bin_tx) {
             // oversampling the output
             for( int k=0; k<OSF; k++){
             #ifdef DCO_OFDM
-                *ofdm_tx++ = -ifft_out->r;
+                *ofdm_tx++ = ifft_out->r;
             #elif defined(FLIP_OFDM)
                 // flip ofdm +ve and -ve symbol separation
                 if (ifft_out->r < 0.0)
@@ -212,24 +212,24 @@ int main(int argc, char **argv){
     static volatile int32_t* dac_add;
 
     // get the DAC hardware address
-    dac_add = (volatile int32_t*)rp_GenGetAdd(RP_CH_2);
+    dac_add = (volatile int32_t*)rp_GenGetAdd(DAC_CHANNEL);
     fprintf(stdout,"TX: Entered, total bits =%d, DAC Address = %p\n", N_BITS*N_QAM*N_SYM, dac_add);
     // reset the tx signal buffer
     memset(tx_sig_buff, 0, ADC_BUFFER_SIZE*(sizeof(real_t)));
     // DAC Output Settings
-    rp_GenWaveform(RP_CH_2, RP_WAVEFORM_ARBITRARY);
+    rp_GenWaveform(DAC_CHANNEL, RP_WAVEFORM_ARBITRARY);
     // set the maximum amplitude of the signal
-    rp_GenAmp(RP_CH_2, 1);
+    rp_GenAmp(DAC_CHANNEL, 1);
     // 1.9Msps frequency (16384 samples) per period
-    rp_GenFreq(RP_CH_2, freq);
+    rp_GenFreq(DAC_CHANNEL, freq);
     // Continuous waveform burst mode
-    rp_GenMode(RP_CH_2, RP_GEN_MODE_BURST);
+    rp_GenMode(DAC_CHANNEL, RP_GEN_MODE_BURST);
     // Single waveform per burst
-    rp_GenBurstCount(RP_CH_2, 1);
+    rp_GenBurstCount(DAC_CHANNEL, 1);
     // No Repetition of Burst
-    rp_GenBurstRepetitions(RP_CH_2, 1);
+    rp_GenBurstRepetitions(DAC_CHANNEL, 1);
     // Waveform time period in micro seconds (16384/1.9Msps)
-    rp_GenBurstPeriod(RP_CH_2, period);
+    rp_GenBurstPeriod(DAC_CHANNEL, period);
 
     // initialize ofdm sync sequence
     generate_ofdm_sync(tx_sig_buff);
@@ -240,7 +240,7 @@ int main(int argc, char **argv){
     clock_gettime(CLOCK_MONOTONIC, &begin);
 	for(frm_num=1; frm_num<=N_FRAMES; frm_num++){
         // get the read pointer position once to update from zero
-        rp_GenGetReadPointer(&pos, RP_CH_2);
+        rp_GenGetReadPointer(&pos, DAC_CHANNEL);
         // write the frame number into binary buffer
         for(i=0; i<FRM_NUM_BITS; i++)
             tx_bin_buff[i] = ((frm_num>>i)&1);
@@ -251,7 +251,7 @@ int main(int argc, char **argv){
         // Write the signal samples into the DAC Buffer
         for(i=0; i<ADC_BUFFER_SIZE;){
             // get the update read pointer position
-            rp_GenGetReadPointer(&pos, RP_CH_2);
+            rp_GenGetReadPointer(&pos, DAC_CHANNEL);
             // if read pointer is at zero, change current position to end
             pos = ((pos==0)?(ADC_BUFFER_SIZE):pos);
             // write the data into the buffer upto current position(convert real wihtin (-1,1) to 14 bit DAC count (0 to 16383) )
@@ -259,7 +259,7 @@ int main(int argc, char **argv){
                 dac_add[i] = ((int32_t)(tx_sig_buff[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_buff[i]>0)-1)) & (MAX_COUNT-1));
         }
         // enable the output for current frame
-        rp_GenOutEnable(RP_CH_2);
+        rp_GenOutEnable(DAC_CHANNEL);
         // publish the frame number
         printf("TX: Transmitting Frame Num = %d\n",frm_num);
 	}
@@ -269,7 +269,7 @@ int main(int argc, char **argv){
     // publish the transmitted frames and total time
     fprintf(stdout,"TX: Transmitted %d Frames in %lf ms\n", N_FRAMES, timediff_ms(&begin, &end));
     // disable the DAC
-    rp_GenOutDisable(RP_CH_2);
+    rp_GenOutDisable(DAC_CHANNEL);
 
     // Releasing resources
     rp_Release();

@@ -9,46 +9,58 @@
 typedef kiss_fft_cpx complex_t;
 typedef kiss_fft_scalar real_t;
 
-#define THRESHOLD (0.001)
+// Transmit Power adjustment to keep signal within +/-1V range (Without Adjustment OFDM output will vary +/-4V)
+// Amplitude after adjustment = Actual Max/sqrt(PWR_ADJ)
 #define PWR_ADJ 20.0
 
-#define RX_PWR_ADJ 300
+// QAM16 Pilot Power = 160/20/(Channel Attenuation), QAM4 Pilot Power = 128/20/(Channel Attenuation)
+// Noise Power = (Channel Noise Level)^2*128. For Back to back channel noise level = (10^-5)
+// Based on expected attenuation from channel threshold will be set, Threshold must be less than Pilot Power
+// Auto Correlation Threshold to distinguish between pilot and noise. Actual Threshold Level = THRESHOLD*128.
+#define THRESHOLD (0.001)
+
 #define OSF 8               // TX over sampling factor
 #define PRE_DSF 2           // RX downsampling before synchronization
 #define POST_DSF 4          // RX downsampling after synchronization
-#define DCO_OFDM            // OFDM Type: DCO/FLIP
-#define M_QAM 4            // QAM order
-#define N_BITS 2            // bits per qam symbol
+#define M_QAM 16            // QAM order
+#define N_BITS 4            // bits per qam symbol
 #define N_FFT 64            // Total Subcarriers (FFT Size)
 #define N_DSC 52            // Data Subcarriers
 #define N_QAM 26            // qam syms per ofdm symbol
 #define N_CP_DATA 9         // CP length for symbols with data
-#define N_CP_SYNC 13        // CP length for symbol with sync info
 #define FRM_NUM_BITS 16     // bits for frame no info (start of each frame)
+
+///! choose whether DCO or FLIP OFDM
+#define DCO_OFDM            // OFDM Type: DCO/FLIP
+
 #ifdef DCO_OFDM
+#define N_CP_SYNC 13        // CP length for symbol with sync info
 #define N_SYM 27            // OFDM Symbols Carrying Data
 #define SYNC_SYM_LEN 616    // OFDM Sync Symbol: (64+13)*8 samples
 #define DATA_SYM_LEN 584    // OFDM Data Symbol: (64+9)*8 samples
-#elif defined(FLIP_OFDM)
-#define N_SYM 13            // OFDM Symbols Carrying Data
-#define SYNC_SYM_LEN 1232    // OFDM Sync Symbol: (64+13)*8 samples
-#define DATA_SYM_LEN 1168    // OFDM Data Symbol: (64+9)*8 samples
+#else
+#define N_CP_SYNC 11         // CP length for symbol with sync info
+#define N_SYM 13             // OFDM Symbols Carrying Data
+#define SYNC_SYM_LEN 1232    // OFDM Sync Symbol: (64+11)*8*2 samples
+#define DATA_SYM_LEN 1168    // OFDM Data Symbol: (64+9)*8*2 samples
 #endif
 
+#define DAC_CHANNEL RP_CH_1
+#define ADC_CHANNEL RP_CH_1
 #define FRM_DUR 8.5
 #define RX_DELAY 100000
-#define N_FRAMES 1000
+#define N_FRAMES 10000
 #define RUN_TIME ((N_FRAMES*FRM_DUR+40))
 #define DC_ERROR 0.015
 #define NANO 1000000000LL
 #define MAX_COUNT (1<<14)
-#define DEBUG_INFO TRUE
+#define DEBUG_INFO FALSE
 #define TRACE_PRINT FALSE
 
 #if DEBUG_INFO
-#define RX_BUFF_SIZE ((N_FRAMES+20)*ADC_BUFFER_SIZE)
+#define RX_BUFF_SIZE ((N_FRAMES+10)*ADC_BUFFER_SIZE)
 #else
-#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
+#define RX_BUFF_SIZE (16*ADC_BUFFER_SIZE)
 #endif
 
 /*! Each OFDM Symbol contains one OFDM Symbol carrying Synchronization Information

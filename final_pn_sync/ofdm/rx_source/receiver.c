@@ -34,7 +34,7 @@ static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
 #endif
 
 // sync symbol buffer
-float ch_attn = RX_PWR_ADJ;
+float ch_attn = 20;
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 // FFT Input / Output Buffers (TBD: Check for performance enhancement with global static allocation vs local dynamic allocation)
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
@@ -260,7 +260,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                         sync_idx = (idx1 - (win_len*PRE_DSF))%RX_BUFF_SIZE;
                         #if DEBUG_INFO
                         // save sync parameters for debugging
-                        sync_indices[frm_count] = sync_idx;
                         sync_fact[0][frm_count] = max_of_min;
                         sync_fact[1][frm_count] = auto_corr;
                         sync_fact[2][frm_count] = cros_corr;
@@ -305,65 +304,70 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
            if ( samp_remng >= SYNC_SYM_LEN ){
                 // constants: Max sync error = pre introduced synchronization error, n_cp_rem = part of cp that is removed
                 const int32_t max_sync_error = floor(N_CP_SYNC/2), n_cp_rem = (N_CP_SYNC - max_sync_error);
-                 // local buffers for storing time and frequency domain channel coefficients
-                complex_t ht[N_FFT] = {{0.0}}, hf[N_FFT] = {{0.0}};
                 // FFT/IFFT configuraiton data structure required for FFT/IFFT operation
                 kiss_fft_cfg ifft_cfg = kiss_fft_alloc(N_FFT, TRUE, NULL, NULL);
+                // Variables: Sync Error from estimated sync point, net error (sync_error*OSF), correction count (max count=2)
+                int sync_err = N_FFT/4, error=0, count =0;
+                // Channel taps: Center - dominant tap, right and left - taps on right and left sides
+                float center_peak, right_peak, left_peak;
 
-                int sync_err = N_FFT/4, error=0;
-
-                for( int i=0; i< N_FFT; i++)
-                    fft_in[i].r = rx_sig_buff[(sync_idx + (n_cp_rem + i)*OSF)%RX_BUFF_SIZE];
-                // Take fft to get pilot symbols in frequency domain
-                kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
-                // calculate channel coefficients by dividing transmit pilots (only at odd subcarriers)
-                for (int i = 1; i<N_QAM; i+=2){
-                    hf[i] = comp_div( fft_out[i], sync_qam_tx[i]);
-                    hf[N_FFT-i] = comp_div( fft_out[N_FFT-i], sync_qam_tx[N_FFT-i]);
-                }
-                // Take ifft of coeficients to get time domain channel response
-                kiss_fft( ifft_cfg, (const complex_t *)hf, ht);
-                // Start from mid point in the channel response since there will be two maxima, due to anti-symmetricity in the pilot
-                // Only need to scan for MAX in a window of N_FFT/2 in the middle, this will give max correction of of +/-(N_FFT/4) samples
-                complex_t *ch_ptr = (ht+N_FFT/4+max_sync_error);
-                // Set dominant tap location in the channel to 0
-                float max_coef = comp_mag_sqr(ch_ptr[0]);
-                // Find the dominant tap searching across pilot locations
-                for( int i=1; i<N_FFT/2; i++) {
-                    if( max_coef < comp_mag_sqr(ch_ptr[i]) ){
-                        max_coef = comp_mag_sqr(ch_ptr[i]);
-                        sync_err = N_FFT/4-i;
+                // correct the synchronization error using channel response
+                do{
+                     // local buffers for storing time and frequency domain channel coefficients
+                    complex_t ht[N_FFT] = {{0.0}}, hf[N_FFT] = {{0.0}};
+                    sync_idx = (sync_idx+2*count)%RX_BUFF_SIZE;
+                    samp_remng -= 2*count;
+                    for( int i=0; i< N_FFT; i++)
+                        fft_in[i].r = rx_sig_buff[(sync_idx + (n_cp_rem + i)*OSF)%RX_BUFF_SIZE];
+                    // Take fft to get pilot symbols in frequency domain
+                    kiss_fft( fft_cfg, (const complex_t *)fft_in, fft_out);
+                    // calculate channel coefficients by dividing transmit pilots (only at odd subcarriers)
+                    for (int i = 1; i<N_QAM; i+=2){
+                        hf[i] = comp_div( fft_out[i], sync_qam_tx[i]);
+                        hf[N_FFT-i] = comp_div( fft_out[N_FFT-i], sync_qam_tx[N_FFT-i]);
                     }
-                }
-                            // confirm if the tap is actually dominant (for cases when sync_idx happens to be on the boundary of two samples, peak could be incorrect,
-                // Either side peak of the maxima might share almost equal power), correct sync will be to move slightly(2 samples) towards that side peak
-                float l_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err-1]);
-                float r_side_pk = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err+1]);
-                if(l_side_pk > 0.1*max_coef){
-                    error = (sync_err*OSF+2);
-                } else if(r_side_pk > 0.1*max_coef){
-                    error = (sync_err*OSF-2);
-                } else
-                    error = sync_err*OSF;
+                    // Take ifft of coeficients to get time domain channel response
+                    kiss_fft( ifft_cfg, (const complex_t *)hf, ht);
+                    // Start from mid point in the channel response since there will be two maxima, due to anti-symmetricity in the pilot
+                    // Only need to scan for MAX in a window of N_FFT/2 in the middle, this will give max correction of of +/-(N_FFT/4) samples
+                    complex_t *ch_ptr = (ht+N_FFT/4+max_sync_error);
+                    // Set dominant tap location in the channel to 0
+                    center_peak = comp_mag_sqr(ch_ptr[0]);
+                    // Find the dominant tap searching across pilot locations
+                    for( int i=1; i<N_FFT/2; i++) {
+                        if( center_peak < comp_mag_sqr(ch_ptr[i]) ){
+                            center_peak = comp_mag_sqr(ch_ptr[i]);
+                            sync_err = N_FFT/4-i;
+                        }
+                    }
+                    // Get the side taps and compare with center to check if correction is accurate or not
+                    left_peak = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err-1]);
+                    right_peak = comp_mag_sqr(ch_ptr[N_FFT/4-sync_err+1]);
+                    count++;
+                } while( (left_peak > 0.1*center_peak || right_peak > 0.1*center_peak) && count<2);
 
-                #ifdef DCO_OFDM
-                ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/max_coef):ch_attn;
-                #elif defined(FLIP_OFDM)
-                ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/max_coef/4):ch_attn;
-                #endif
+                error = sync_err*OSF;
 
-                #if DEBUG_INFO
-                sync_corr[frm_count-1] = error;
-                dom_tap[0][frm_count-1] = l_side_pk;
-                dom_tap[1][frm_count-1] = max_coef;
-                dom_tap[2][frm_count-1] = r_side_pk;
-                est_attn[frm_count-1] = ch_attn;
-                #endif
-                kiss_fft_free(ifft_cfg);
                 // compute the demodulation index and remaining samples after sync correction
                 demod_idx = (sync_idx + SYNC_SYM_LEN - error)%RX_BUFF_SIZE;
                 samp_remng = samp_remng - SYNC_SYM_LEN + error;
                 sync_corrected = 1;
+
+                #ifdef DCO_OFDM
+                ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/(center_peak+right_peak+left_peak)):ch_attn;
+                #elif defined(FLIP_OFDM)
+                ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/center_peak/4):ch_attn;
+                #endif
+
+                #if DEBUG_INFO
+                sync_indices[frm_count-1] = sync_idx;
+                sync_corr[frm_count-1] = error;
+                dom_tap[0][frm_count-1] = left_peak;
+                dom_tap[1][frm_count-1] = center_peak;
+                dom_tap[2][frm_count-1] = right_peak;
+                est_attn[frm_count-1] = ch_attn;
+                #endif
+                kiss_fft_free(ifft_cfg);
             }
         }
 
@@ -454,7 +458,7 @@ int main(int argc, char** argv){
     struct timespec begin, end;
     // get the DAC hardware address
     static volatile uint32_t* adc_add = NULL;
-    adc_add = (volatile uint32_t*)rp_AcqGetAdd(RP_CH_2);
+    adc_add = (volatile uint32_t*)rp_AcqGetAdd(ADC_CHANNEL);
 
     // File pointers: Binary Data File, BER Result File
     time_t now = time(NULL);
@@ -523,7 +527,7 @@ int main(int argc, char** argv){
         samp_recvd = (curr_pos - prev_pos) % ADC_BUFFER_SIZE;
 
         // acquire the data into rx signal buffer from ADC buffer either using library functon or using hardware address(much faster)
-//	    rp_AcqGetDataV_WA(RP_CH_2, prev_pos, &samp_recvd, rx_sig_buff, recv_idx, RX_BUFF_SIZE );
+//	    rp_AcqGetDataV_WA(ADC_CHANNEL, prev_pos, &samp_recvd, rx_sig_buff, recv_idx, RX_BUFF_SIZE );
         for (int i =0; i<samp_recvd; i++){
             adc_counts = ( adc_add[(prev_pos+i)%ADC_BUFFER_SIZE] & 0x3FFF );
             adc_counts = ( (adc_counts < (MAX_COUNT/2)) ? adc_counts : (adc_counts - MAX_COUNT) );
@@ -670,8 +674,9 @@ int main(int argc, char** argv){
         }
     }
     for(i = 0; i <recvd_frms; i++){
-        fprintf(sync_fp," %d, %d, \t%lf, \t%lf, \t%lf, \t%lf", sync_indices[i]+616, sync_corr[i], dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
-        fprintf(sync_fp," \t%lf, \t%lf, \t%lf\n", sync_fact[0][i], sync_fact[1][i], sync_fact[2][i]);
+        fprintf(sync_fp," %d, %d", sync_indices[i]+616, sync_corr[i]);
+        fprintf(sync_fp," \t%lf, %lf, %lf, \t%lf", dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
+        fprintf(sync_fp," \t%lf, %lf, %lf\n", sync_fact[0][i], sync_fact[1][i], sync_fact[2][i]);
     }
     for(i = 0; i <recvd_frms*N_SYM*N_QAM; i++){
         fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
