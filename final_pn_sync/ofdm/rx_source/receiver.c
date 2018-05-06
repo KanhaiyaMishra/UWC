@@ -34,7 +34,7 @@ static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
 #endif
 
 // sync symbol buffer
-float ch_attn = 20;
+float ch_attn;
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 // FFT Input / Output Buffers (TBD: Check for performance enhancement with global static allocation vs local dynamic allocation)
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
@@ -354,9 +354,9 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                 sync_corrected = 1;
 
                 #ifdef DCO_OFDM
-                ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/(center_peak+right_peak+left_peak)):ch_attn;
+                ch_attn = (N_FFT*N_FFT*N_QAM/(center_peak+right_peak+left_peak));
                 #elif defined(FLIP_OFDM)
-                ch_attn = (error%OSF==0)?(N_FFT*N_FFT*N_QAM/center_peak/4):ch_attn;
+                ch_attn = (N_FFT*N_FFT*N_QAM/center_peak/4);
                 #endif
 
                 #if DEBUG_INFO
@@ -673,7 +673,7 @@ int main(int argc, char** argv){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
         }
     }
-    for(i = 0; i <recvd_frms; i++){
+    for(i = 0; i <=recvd_frms; i++){
         fprintf(sync_fp," %d, %d", sync_indices[i]+616, sync_corr[i]);
         fprintf(sync_fp," \t%lf, %lf, %lf, \t%lf", dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
         fprintf(sync_fp," \t%lf, %lf, %lf\n", sync_fact[0][i], sync_fact[1][i], sync_fact[2][i]);

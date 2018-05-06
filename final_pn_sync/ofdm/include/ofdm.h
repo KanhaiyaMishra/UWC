@@ -49,12 +49,12 @@ typedef kiss_fft_scalar real_t;
 #define ADC_CHANNEL RP_CH_1
 #define FRM_DUR 8.5
 #define RX_DELAY 100000
-#define N_FRAMES 10000
+#define N_FRAMES 100
 #define RUN_TIME ((N_FRAMES*FRM_DUR+40))
 #define DC_ERROR 0.015
 #define NANO 1000000000LL
 #define MAX_COUNT (1<<14)
-#define DEBUG_INFO FALSE
+#define DEBUG_INFO TRUE
 #define TRACE_PRINT FALSE
 
 #if DEBUG_INFO
