@@ -664,21 +664,23 @@ int main(int argc, char** argv){
     ber = ber/(i*data_bits);
     fprintf(stdout,"RX: Received total %d valid frames with BER2 = %f\n", i, ber);
     }
+
     #if DEBUG_INFO
+    uint32_t frms_save = (DEBUG_FRAMES<recvd_frms?DEBUG_FRAMES:recvd_frms);
 //    if(ber>0.0 || missd_frms>0){
     // Save post-processed and online received data
     if(ber > 0.0){
         // save demodulated data
-        for(i = 0; i <recvd_frms*bits_per_frame; i++){
+        for(i = 0; i <frms_save*bits_per_frame; i++){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
         }
     }
-    for(i = 0; i <=recvd_frms; i++){
+    for(i = 0; i <=frms_save; i++){
         fprintf(sync_fp," %d, %d", sync_indices[i]+616, sync_corr[i]);
         fprintf(sync_fp," \t%lf, %lf, %lf, \t%lf", dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
         fprintf(sync_fp," \t%lf, %lf, %lf\n", sync_fact[0][i], sync_fact[1][i], sync_fact[2][i]);
     }
-    for(i = 0; i <recvd_frms*N_SYM*N_QAM; i++){
+    for(i = 0; i <frms_save*N_SYM*N_QAM; i++){
         fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
         fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
     }

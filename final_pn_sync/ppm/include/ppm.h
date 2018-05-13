@@ -23,9 +23,10 @@ extern "C" {
 #define ADC_BUFFER_SIZE 16384
 #endif
 
+#define AMP_ADJ 1
 #define PPM 8
 #define OSF 8
-#define PPM_HIGH 0.9
+#define PPM_HIGH (0.9/AMP_ADJ)
 #define PPM_LOW 0.0
 #define N_SAMP_SYM (PPM*OSF)
 

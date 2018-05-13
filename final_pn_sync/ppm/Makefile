@@ -29,8 +29,8 @@ LDFLAGS =  -Wl,-rpath,$(LIBSO) -L$(LIBSO)
 # standard library dependencies
 LDLIBS = -lm -lpthread -lrp
 # output executable file name
-TARGET1 = $(BINDIR)/ofdm_tx
-TARGET2 = $(BINDIR)/ofdm_rx
+TARGET1 = $(BINDIR)/ppm_tx
+TARGET2 = $(BINDIR)/ppm_rx
 
 # get the ".o" names from the source files
 TXSRC = $(wildcard $(TXSRCDIR)/*.c)

@@ -6,7 +6,7 @@
 #include <sys/time.h>
 #include <string.h>
 #include "redpitaya/rp.h"
-#define N_FRAMES 50
+#define N_FRAMES 5000
 #define MAX_COUNT (1<<14)
 
 uint64_t GetTimeStamp(){
@@ -28,17 +28,17 @@ int main(int argc, char **argv){
         printf("Initialization Failed\n");
 
     for(i = 0; i < ADC_BUFFER_SIZE; i++){
-        buff[i] = (0.9)*sin((2 * M_PI) / (ADC_BUFFER_SIZE) * i);
+        buff[i] = 0.9*sin((3 * M_PI) / (ADC_BUFFER_SIZE) * i);
     }
 
     dac_add = (volatile int32_t*)rp_GenGetAdd(RP_CH_2);
     fprintf(stdout,"TX: Entered\n");
     rp_GenWaveform(RP_CH_2, RP_WAVEFORM_ARBITRARY);
-    rp_GenFreq(RP_CH_2, 1e6/period);
-    rp_GenMode(RP_CH_2, RP_GEN_MODE_BURST);
-    rp_GenBurstCount(RP_CH_2, 1);
-    rp_GenBurstRepetitions(RP_CH_2, 1);
-    rp_GenBurstPeriod(RP_CH_2, period);
+    rp_GenFreq(RP_CH_2, freq);
+    rp_GenMode(RP_CH_2, RP_GEN_MODE_CONTINUOUS);
+//    rp_GenBurstCount(RP_CH_2, 1);
+//    rp_GenBurstRepetitions(RP_CH_2, 1);
+//    rp_GenBurstPeriod(RP_CH_2, period);
 //        rp_GenArbWaveform(RP_CH_2, buff, ADC_BUFFER_SIZE);
 
     start = GetTimeStamp();
