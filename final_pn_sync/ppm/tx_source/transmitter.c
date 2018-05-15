@@ -9,11 +9,6 @@
 #include "ppm.h"
 #include "prbs.h"
 
-#define NANO 1000000000LL
-// # frames to transmitted
-#define N_FRAMES 1010
-// max value to be written to DAC
-#define MAX_COUNT (1<<14)
 // buffer to hold synchornizations sequence
 uint8_t pn_seq_buff[PN_SEQ_LEN];
 // symbols per frame
@@ -94,7 +89,7 @@ int main(int argc, char **argv){
     rp_GenOffset(RP_CH_2, 0);
 	rp_GenAmp(RP_CH_2, 1.0);
     rp_GenFreq(RP_CH_2, freq);
-    rp_GenMode(RP_CH_2, RP_GEN_MODE_BURST);
+    rp_GenMode(RP_CH_2, RP_GEN_MODE_CONTINUOUS);
     rp_GenBurstCount(RP_CH_2, 1);
     rp_GenBurstRepetitions(RP_CH_2, 1);
     rp_GenBurstPeriod(RP_CH_2, period);

@@ -12,18 +12,6 @@
 #include "ppm.h"
 #include "prbs.h"
 
-#define DC_ERROR 0.015
-// #frames to be received
-#define N_FRAMES 1000
-// Frame duration (actual duration = 8.389us)
-#define FRM_DUR 9
-// recv signal buffer size (must be in powers of 2 (because of unsigned diff of indices later used in the program) )
-#define RX_BUFF_SIZE (4*ADC_BUFFER_SIZE)
-// Whether or not to print traces (True only when debugging, use smaller number of frames)
-#define TRACE_PRINT FALSE
-// constant for converting second to nano second
-#define NANO 1000000000LL
-
 // File pointer to log traces
 FILE *trace_fp = NULL;
 // Number of bits to be received per frame
@@ -85,6 +73,9 @@ uint32_t ppm_demod(uint8_t *bin_rx, uint32_t demod_idx, uint32_t samp_remng, uin
                 demod_idx = (demod_idx+PN_SEQ_LEN*OSF)%RX_BUFF_SIZE;
                 samp_remng -= (PN_SEQ_LEN*OSF);
                 fprintf(stdout,"RX: Receiving Frame number = %d \n", frm_count);
+                #if TRACE_PRINT
+                fprintf(trace_fp,"RX: Synchronization completedm, Sync Index[%d] = %d\n", frm_count-1, demod_idx);
+                #endif
                 break;
 		    }
             demod_idx++;
@@ -165,20 +156,22 @@ int main(int argc, char** argv){
     // timing variables
     struct timespec begin, end;
 
-    FILE *bin_fp, *ber_fp;
+    FILE *bin_fp, *ber_fp, *sig_fp;
     time_t now = time(NULL);
-    char log_dir[255], ber_file[255], bin_file[255];
+    char log_dir[255], ber_file[255], bin_file[255], sig_file[255];
 
     strftime(log_dir, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
     mkdir(log_dir, 0777);
     strftime(bin_file, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
+    strftime(sig_file, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
     strftime(ber_file, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
+    sig_fp = fopen(sig_file,"w+");
     bin_fp = fopen(bin_file,"w+");
     ber_fp = fopen(ber_file,"w+");
 
     #if TRACE_PRINT
     struct timespec t1, t2, t3;
-    char log_dir[255], ber_file[255], bin_file[255], sig_file[255];
+    char trace_file[255];
     strftime(trace_file, 255,"./log/PPM_%Y_%m_%d_%H_%M_%S/trace.txt",gmtime(&now));
     trace_fp = fopen(trace_file,"w+");
     #endif
@@ -357,6 +350,9 @@ int main(int argc, char** argv){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
         }
     }
+        for(i = 0; i <recv_idx; i++){
+            fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+        }
 
     // close the output files
     fclose(ber_fp);

@@ -19,12 +19,16 @@ extern "C" {
 #endif
 
 #include <inttypes.h>
-#ifndef ADC_BUFFER_SIZE
-#define ADC_BUFFER_SIZE 16384
-#endif
 
+#define N_FRAMES 10
+#define RX_BUFF_SIZE (16*ADC_BUFFER_SIZE)
+#define NANO 1000000000LL
+#define FRM_DUR 8.5
+#define TRACE_PRINT TRUE
+#define DC_ERROR 0.015
+#define MAX_COUNT (1<<14)
 #define AMP_ADJ 1
-#define PPM 8
+#define PPM 4
 #define OSF 8
 #define PPM_HIGH (0.9/AMP_ADJ)
 #define PPM_LOW 0.0
