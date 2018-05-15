@@ -206,13 +206,14 @@ int main(int argc, char **argv){
 
     struct timespec begin, end;
     real_t freq = 125e6/(16384*64);
+    uint32_t period = 1e6/freq;
     real_t tx_sig_buff[ADC_BUFFER_SIZE]={0.0};
     uint8_t tx_bin_buff[N_SYM*N_QAM*N_BITS]={0};
     static volatile int32_t* dac_add;
 
     // get the DAC hardware address
     dac_add = (volatile int32_t*)rp_GenGetAdd(DAC_CHANNEL);
-    fprintf(stdout,"TX: Entered, total bits =%d, DAC Address = %p\n", N_BITS*N_QAM*N_SYM, dac_add);
+    fprintf(stdout,"TX: Entered, period =%d, DAC Address = %p\n", period, dac_add);
     // reset the tx signal buffer
     memset(tx_sig_buff, 0, ADC_BUFFER_SIZE*(sizeof(real_t)));
     // DAC Output Settings
@@ -223,7 +224,6 @@ int main(int argc, char **argv){
     rp_GenFreq(DAC_CHANNEL, freq);
     // Continuous waveform burst mode
     rp_GenMode(DAC_CHANNEL, RP_GEN_MODE_CONTINUOUS);
-
     // initialize ofdm sync sequence
     generate_ofdm_sync(tx_sig_buff);
     // write the first frame num
@@ -235,8 +235,8 @@ int main(int argc, char **argv){
     // Write the signal samples into the DAC Buffer
     for(int i=0; i<ADC_BUFFER_SIZE;i++)
         dac_add[i] = ((int32_t)(round(tx_sig_buff[i]*MAX_COUNT/2)) & (MAX_COUNT-1));
-    rp_GenOutEnable(DAC_CHANNEL);
     clock_gettime(CLOCK_MONOTONIC, &begin);
+    rp_GenOutEnable(DAC_CHANNEL);
 	while(timediff_ms(&begin, &end)<=(N_FRAMES+1)*FRM_DUR){
         clock_gettime(CLOCK_MONOTONIC, &end);
     }

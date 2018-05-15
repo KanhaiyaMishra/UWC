@@ -24,10 +24,6 @@ static double timediff_ms(struct timespec *begin, struct timespec *end){
 
 FILE *trace_fp = NULL;
 int delay = 0, frm_count=0;
-#if DEBUG_INFO
-static complex_t qam_raw_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
-static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
-#endif
 
 // sync symbol buffer
 float ch_attn;
@@ -122,11 +118,6 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
     real_t qam_limit = pow(2, N_BITS/2) - 1;
     real_t norm_const = sqrt(ch_attn*(2*(M_QAM - 1)/3)*N_DSC)/N_FFT;
 
-    #if DEBUG_INFO
-    static complex_t *qam_raw_ptr=qam_raw_buff;
-    static complex_t *qam_demod_ptr=qam_demod_buff;
-    #endif
-
     for(i=0; i<N_QAM; i++)
     {
         //extract the qam data from input buffer
@@ -154,15 +145,6 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
         }
         bin_data += N_BITS;
         qam_data++;
-
-        #if DEBUG_INFO
-        qam_raw_ptr->r = temp.r;
-        qam_raw_ptr->i = temp.i;
-        qam_demod_ptr->r = qam_sym_r;
-        qam_demod_ptr->i = qam_sym_i;
-        qam_raw_ptr++;
-        qam_demod_ptr++;
-        #endif
     }
 }
 
@@ -256,7 +238,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                         sync_idx = (idx1 - (win_len*PRE_DSF))%RX_BUFF_SIZE;
                         auto_corr_s = auto_corr;
                         cros_corr_s = cros_corr;
-                    }else if (window.base_ptr[window.front].value < 0.6*max_of_min){
+                    }else if (window.base_ptr[window.front].value < 0.3*max_of_min){
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
                         sync_done = 1; frm_count++;
                         // compute remaining samples from the sync index
@@ -347,9 +329,9 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                 delay = (demod_idx - SYNC_SYM_LEN);
 
                 #ifdef DCO_OFDM
-                ch_attn = (N_FFT*N_FFT*N_QAM/(center_peak+(left_peak+right_peak)/2));
+                ch_attn = (N_FFT*N_FFT*N_QAM/center_peak);
                 #elif defined(FLIP_OFDM)
-                ch_attn = (N_FFT*N_FFT*N_QAM/(center_peak+(left_peak+right_pek)/2))/4);
+                ch_attn = (N_FFT*N_FFT*N_QAM/center_peak/4);
                 #endif
                 fprintf(stdout,"RX: Sync Correction Done, Corrected Sync Index=%d, Correction Done = %d\n", demod_idx, error);
                 fprintf(stdout,"RX: Sync Correction Done, Three Dominnt Taps are %f, %f, %f \nEstimated attenuation = %f\n", left_peak, center_peak, right_peak, ch_attn);
@@ -449,22 +431,20 @@ int main(int argc, char** argv){
 
     // File pointers: Binary Data File, BER Result File
     time_t now = time(NULL);
-    FILE *bin_fp, *ber_fp;
-    char log_dir[255], ber_file[255], bin_file[255];
+    FILE *ber_fp;
+    char log_dir[255], ber_file[255];
 
     strftime(log_dir, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S",gmtime(&now));
-    mkdir(log_dir, 0777);
-    strftime(bin_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
     strftime(ber_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/ber.txt",gmtime(&now));
-    bin_fp = fopen(bin_file,"w+");
+    mkdir(log_dir, 0777);
     ber_fp = fopen(ber_file,"w+");
 
     #if DEBUG_INFO
-    FILE *sig_fp, *qam_fp;
-    char sig_file[255], qam_file[255];
-    strftime(qam_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/qam.txt",gmtime(&now));
+    FILE *sig_fp, *bin_fp;
+    char sig_file[255], bin_file[255];
+    strftime(bin_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/qam.txt",gmtime(&now));
     strftime(sig_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
-    qam_fp = fopen(qam_file,"w+");
+    bin_fp = fopen(bin_file,"w+");
     sig_fp = fopen(sig_file,"w+");
     #endif
 
@@ -499,7 +479,7 @@ int main(int argc, char** argv){
 
     clock_gettime(CLOCK_MONOTONIC, &begin);
     // continue recieving untill receive signal buffer gets filled
-    while( (frm_count>0) || recv_idx<RX_BUFF_SIZE ){
+    while( (frm_count>0) || (recv_idx < RX_BUFF_SIZE) ){
 
         #if TRACE_PRINT
         // get the cpu clock at the start
@@ -587,43 +567,34 @@ int main(int argc, char** argv){
         for(i = 0; i <frms_save*bits_per_frame; i++){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
         }
-        for(i = 0; i <frms_save*N_SYM*N_QAM; i++){
-            fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
-            fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
-        }
         for(i = 0; i <recv_idx; i++){
             fprintf(sig_fp," %f \n", rx_sig_buff[i]);
         }
         #endif
         if(RX_BUFF_SIZE > N_FRAMES*ADC_BUFFER_SIZE){
-            float temp=0, noise=0, snr=0, diff[ADC_BUFFER_SIZE/OSF] = {0.0}, mean=0;
+            float diff[ADC_BUFFER_SIZE/OSF] = {0.0}, temp = 0, var = 0, snr = 0;
             int i=0;
             FILE *tx_fp = fopen(QAMDATA,"r");
             for(i=0; i<ADC_BUFFER_SIZE/OSF; i++){
                 fscanf(tx_fp,"%f",&temp);
-                diff[i] = rx_sig_buff[delay+8*i]-temp/sqrt(PWR_ADJ);
-                mean = mean + diff[i];
+                diff[i] = rx_sig_buff[delay+8*i]*sqrt(ch_attn)-temp;
             }
-            mean = mean/(ADC_BUFFER_SIZE/OSF);
             for(i=0; i<ADC_BUFFER_SIZE/OSF; i++)
-                noise += ((diff[i]-mean)*(diff[i]-mean));
-
-            snr = 10*log10((ADC_BUFFER_SIZE/OSF/PWR_ADJ)/noise);
-            fprintf(stdout,"snr = %f, noise_var = %g, noise_mean=%f\n", snr, noise, mean);
+                var += diff[i]*diff[i];
+            var = var/(ADC_BUFFER_SIZE/OSF);
+            snr = 10*log10(1/var);
+            fprintf(stdout,"snr = %f, noise_pwr = %g per unit signal power\n", snr, var);
             fclose(tx_fp);
         }
     } else
         fprintf(stdout,"Sync Could not be established\n");
 
     fclose(ber_fp);
-    fclose(bin_fp);
-
     #if DEBUG_INFO
     // close files
-    fclose(qam_fp);
+    fclose(bin_fp);
     fclose(sig_fp);
     #endif
-
     #if TRACE_PRINT
     fclose(trace_fp);
     #endif
