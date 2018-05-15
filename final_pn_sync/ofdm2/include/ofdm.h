@@ -6,21 +6,21 @@
 #define TRUE 1
 #define FALSE 0
 
-#define N_FRAMES 100
-#define DEBUG_FRAMES 100
+#define N_FRAMES 10
+#define DEBUG_FRAMES 50
 
 typedef kiss_fft_cpx complex_t;
 typedef kiss_fft_scalar real_t;
 
 // Transmit Power adjustment to keep signal within +/-1V range (Without Adjustment OFDM output will vary +/-4V)
 // Amplitude after adjustment = Actual Max/sqrt(PWR_ADJ)
-#define PWR_ADJ 20.0
+#define PWR_ADJ 40.0f
 
 // QAM16 Pilot Power = 160/20/(Channel Attenuation), QAM4 Pilot Power = 128/20/(Channel Attenuation)
 // Noise Power = (Channel Noise Level)^2*128. For Back to back channel noise level = (10^-5)
 // Based on expected attenuation from channel threshold will be set, Threshold must be less than Pilot Power
-// Auto Correlation Threshold to distinguish between pilot and noise. Actual Threshold Level = THRESHOLD*128.
-#define THRESHOLD (0.02)
+// Auto Correlation Threshold to distinguish between pilot and noise. Actual Threshold Level = 128/THRESHOLD.
+#define THRESHOLD 80.0f
 
 #define OSF 8               // TX over sampling factor
 #define PRE_DSF 2           // RX downsampling before synchronization
@@ -35,6 +35,12 @@ typedef kiss_fft_scalar real_t;
 
 ///! choose whether DCO or FLIP OFDM
 #define DCO_OFDM            // OFDM Type: DCO/FLIP
+
+#if (M_QAM==4)
+#define QAMDATA "./sigqam4.txt"
+#elif (M_QAM==16)
+#define QAMDATA "./sigqam16.txt"
+#endif
 
 #ifdef DCO_OFDM
 #define N_CP_SYNC 13        // CP length for symbol with sync info

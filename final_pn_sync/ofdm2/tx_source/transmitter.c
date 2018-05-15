@@ -226,16 +226,18 @@ int main(int argc, char **argv){
 
     // initialize ofdm sync sequence
     generate_ofdm_sync(tx_sig_buff);
+    // write the first frame num
+    tx_bin_buff[0] = 1;
     // write the prbs in the binary buffer
     pattern_LFSR_byte(PRBS7, tx_bin_buff+FRM_NUM_BITS, N_SYM*N_QAM*N_BITS-FRM_NUM_BITS);
     // modulate the binary data to generate OFDM signal
     ofdm_mod(tx_sig_buff+SYNC_SYM_LEN, tx_bin_buff);
     // Write the signal samples into the DAC Buffer
     for(int i=0; i<ADC_BUFFER_SIZE;i++)
-        dac_add[i] = ((int32_t)(1*tx_sig_buff[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_buff[i]>0)-1)) & (MAX_COUNT-1));
+        dac_add[i] = ((int32_t)(round(tx_sig_buff[i]*MAX_COUNT/2)) & (MAX_COUNT-1));
     rp_GenOutEnable(DAC_CHANNEL);
     clock_gettime(CLOCK_MONOTONIC, &begin);
-	while(timediff_ms(&begin, &end)<=N_FRAMES*FRM_DUR){
+	while(timediff_ms(&begin, &end)<=(N_FRAMES+1)*FRM_DUR){
         clock_gettime(CLOCK_MONOTONIC, &end);
     }
     rp_GenOutDisable(DAC_CHANNEL);
