@@ -26,7 +26,7 @@ FILE *trace_fp = NULL;
 int delay = 0, frm_count=0;
 
 // sync symbol buffer
-float ch_attn;
+float ch_attn, snr_const;
 static complex_t sync_qam_tx[N_FFT] = {{0.0}};
 // FFT Input / Output Buffers (TBD: Check for performance enhancement with global static allocation vs local dynamic allocation)
 static complex_t fft_in_buff[N_FFT] = {{0.0}};
@@ -286,7 +286,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
 
                 // correct the synchronization error using channel response
                 do{
-                     // local buffers for storing time and frequency domain channel coefficients
+                    // local buffers for storing time and frequency domain channel coefficients
                     complex_t ht[N_FFT] = {{0.0}}, hf[N_FFT] = {{0.0}};
                     sync_idx = (sync_idx+2*count)%RX_BUFF_SIZE;
                     samp_remng -= 2*count;
@@ -320,21 +320,22 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                 } while( (left_peak > 0.1*center_peak || right_peak > 0.1*center_peak) && count<2);
 
                 error = sync_err*OSF;
-
                 // compute the demodulation index and remaining samples after sync correction
                 demod_idx = (sync_idx + SYNC_SYM_LEN - error)%RX_BUFF_SIZE;
                 samp_remng = samp_remng - SYNC_SYM_LEN + error;
                 sync_corrected = 1;
-
-                delay = (demod_idx - SYNC_SYM_LEN);
 
                 #ifdef DCO_OFDM
                 ch_attn = (N_FFT*N_FFT*N_QAM/center_peak);
                 #elif defined(FLIP_OFDM)
                 ch_attn = (N_FFT*N_FFT*N_QAM/center_peak/4);
                 #endif
-                fprintf(stdout,"RX: Sync Correction Done, Corrected Sync Index=%d, Correction Done = %d\n", demod_idx, error);
-                fprintf(stdout,"RX: Sync Correction Done, Three Dominnt Taps are %f, %f, %f \nEstimated attenuation = %f\n", left_peak, center_peak, right_peak, ch_attn);
+                if(frm_count==1){
+                    delay = (demod_idx - SYNC_SYM_LEN);
+                    snr_const = ch_attn;
+                    fprintf(stdout,"RX: Sync Correction Done, Corrected Sync Index=%d, Correction Done = %d\n", demod_idx, error);
+                    fprintf(stdout,"RX: Sync Correction Done, Three Dominnt Taps are %f, %f, %f \nEstimated attenuation = %f\n", left_peak, center_peak, right_peak, ch_attn);
+                }
                 kiss_fft_free(ifft_cfg);
             }
         }
@@ -345,9 +346,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
             if ( samp_remng >= (N_SYM-sym_count)*DATA_SYM_LEN ){
                 // if yes, demodulate till end of the frame
                 demod_sym = N_SYM - sym_count;
-                // reset syncronizaiton parameters for sync of next frame
-                corr_count = -1;
-                max_of_min = 0;
                 #if TRACE_PRINT
                 fprintf(trace_fp,"RX: Demodulation Completed for Frame Num %d, Symbol Count = %d\n", frm_count, sym_count+demod_sym);
                 #endif
@@ -388,14 +386,17 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
             // free fft configuration variables
             kiss_fft_free(fft_cfg);
             // recursive call at the end of each frame when there are enough samples remaining for synchronization and/or demodulation
-            if( sym_count==N_SYM && samp_remng >= DATA_SYM_LEN){
+            if( sym_count==N_SYM && samp_remng>=SYNC_SYM_LEN ){
                 fprintf(stdout,"\rRX: Receiving frame number = %d",++frm_count);
                 sym_count = 0;
-                samp_remng -= SYNC_SYM_LEN;
-                demod_idx = (demod_idx + SYNC_SYM_LEN);
+                // reset syncronizaiton parameters for sync of next frame
+                sync_corrected = 0;
+//                samp_remng -= SYNC_SYM_LEN;
+                sync_idx = demod_idx;
                 uint32_t new_bits = 0;
                 samp_remng = ofdm_demod(bin_rx, demod_idx, samp_remng, &new_bits);
-                demod_sym += (new_bits/(N_QAM*N_BITS));            }
+                demod_sym += (new_bits/(N_QAM*N_BITS));
+            }
         }
     }
 
@@ -577,7 +578,7 @@ int main(int argc, char** argv){
             FILE *tx_fp = fopen(QAMDATA,"r");
             for(i=0; i<ADC_BUFFER_SIZE/OSF; i++){
                 fscanf(tx_fp,"%f",&temp);
-                diff[i] = rx_sig_buff[delay+8*i]*sqrt(ch_attn)-temp;
+                diff[i] = rx_sig_buff[delay+8*i]*sqrt(40)-temp;
             }
             for(i=0; i<ADC_BUFFER_SIZE/OSF; i++)
                 var += diff[i]*diff[i];

@@ -6,7 +6,7 @@
 #define TRUE 1
 #define FALSE 0
 
-#define N_FRAMES 10000
+#define N_FRAMES 1000
 #define DEBUG_FRAMES 50
 
 typedef kiss_fft_cpx complex_t;
@@ -25,8 +25,8 @@ typedef kiss_fft_scalar real_t;
 #define OSF 8               // TX over sampling factor
 #define PRE_DSF 2           // RX downsampling before synchronization
 #define POST_DSF 4          // RX downsampling after synchronization
-#define M_QAM 16            // QAM order
-#define N_BITS 4            // bits per qam symbol
+#define M_QAM 4            // QAM order
+#define N_BITS 2            // bits per qam symbol
 #define N_FFT 64            // Total Subcarriers (FFT Size)
 #define N_DSC 52            // Data Subcarriers
 #define N_QAM 26            // qam syms per ofdm symbol
