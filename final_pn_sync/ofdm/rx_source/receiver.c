@@ -30,7 +30,6 @@ static uint32_t sync_corr[N_FRAMES+1] = {0};
 static double sync_fact[3][N_FRAMES+1] = {{0}};
 static double dom_tap[3][N_FRAMES+1] = {{0}};
 static complex_t qam_raw_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
-static complex_t qam_demod_buff[(N_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
 #endif
 
 // sync symbol buffer
@@ -128,7 +127,6 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
 
     #if DEBUG_INFO
     static complex_t *qam_raw_ptr=qam_raw_buff;
-    static complex_t *qam_demod_ptr=qam_demod_buff;
     #endif
 
     for(i=0; i<N_QAM; i++)
@@ -162,10 +160,7 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
         #if DEBUG_INFO
         qam_raw_ptr->r = temp.r;
         qam_raw_ptr->i = temp.i;
-        qam_demod_ptr->r = qam_sym_r;
-        qam_demod_ptr->i = qam_sym_i;
         qam_raw_ptr++;
-        qam_demod_ptr++;
         #endif
     }
 }
@@ -663,28 +658,21 @@ int main(int argc, char** argv){
     fprintf(stdout,"RX: Received total %d valid frames with BER2 = %f\n", i, ber);
     }
     }
+    fclose(ber_fp);
 
     #if DEBUG_INFO
     uint32_t frms_save = (DEBUG_FRAMES<=recvd_frms?DEBUG_FRAMES:recvd_frms), i;
-    for(i = 0; i <frms_save*bits_per_frame; i++){
+    for(i = 0; i <recvd_frms*bits_per_frame; i++){
         fprintf(bin_fp," %d \n", rx_bin_buff[i]);
     }
     for(i = 0; i <=frms_save; i++){
-        fprintf(sync_fp," %d, %d", sync_indices[i]+616, sync_corr[i]);
+        fprintf(sync_fp," %d, %d", sync_indices[i], sync_corr[i]);
         fprintf(sync_fp," \t%lf, %lf, %lf, \t%lf", dom_tap[0][i], dom_tap[1][i], dom_tap[2][i], est_attn[i]);
         fprintf(sync_fp," \t%lf, %lf, %lf\n", sync_fact[0][i], sync_fact[1][i], sync_fact[2][i]);
     }
     for(i = 0; i <frms_save*N_SYM*N_QAM; i++){
         fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
-        fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
     }
-    #endif
-
-
-    fclose(ber_fp);
-    fclose(bin_fp);
-
-    #if DEBUG_INFO
     for(i = 0; i <recv_idx; i++){
         fprintf(sig_fp," %f \n", rx_sig_buff[i]);
     }
@@ -692,6 +680,7 @@ int main(int argc, char** argv){
     fclose(qam_fp);
     fclose(sync_fp);
     fclose(sig_fp);
+    fclose(bin_fp);
     #endif
 
     #if TRACE_PRINT

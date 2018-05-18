@@ -143,11 +143,6 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
         qam_sym_r = gray_map[ (uint8_t)(round((temp.r+qam_limit)/2)) ];
         qam_sym_i = gray_map[ (uint8_t)(round((temp.i+qam_limit)/2)) ];
 
-        #if DEBUG_INFO
-        qam_raw_ptr->r = qam_sym_r;
-        qam_raw_ptr->i = qam_sym_i;
-        #endif
-
         //write the binary data into output buffer
         for (j=1; j<=N_BITS/2; j++){
             (*(bin_data + N_BITS/2 - j)) = (qam_sym_r>>(j-1))&0x1;
