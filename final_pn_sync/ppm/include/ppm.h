@@ -20,7 +20,7 @@ extern "C" {
 
 #include <inttypes.h>
 
-#define N_FRAMES 10
+#define N_FRAMES 1000
 #define RX_BUFF_SIZE (16*ADC_BUFFER_SIZE)
 #define NANO 1000000000LL
 #define FRM_DUR 8.5
@@ -49,6 +49,9 @@ extern "C" {
 #ifndef FALSE
 #define FALSE 0
 #endif
+
+#define DAC_CHANNEL RP_CH_2
+#define ADC_CHANNEL RP_CH_1
 
 #define PN_SEQ_TYPE PRBS7
 #define PN_SEQ_LEN 32

@@ -148,7 +148,7 @@ int main(int argc, char** argv){
     uint32_t demod_idx = 0, recv_idx = 0;
     // get the DAC hardware address
     static volatile uint32_t *adc_add;
-    adc_add = (volatile uint32_t*)rp_AcqGetAdd(RP_CH_2);
+    adc_add = (volatile uint32_t*)rp_AcqGetAdd(ADC_CHANNEL);
     int32_t i, j, adc_counts=0;
 
     // initialize sync_sequence to get correlation value
@@ -208,7 +208,7 @@ int main(int argc, char** argv){
         // calculate the samp_recvd of the data to be acquired
 		samp_recvd = (curr_pos - prev_pos) % ADC_BUFFER_SIZE;
         // acquire the data into rx signal buffer from hardware ADC buffer
-//	    rp_AcqGetDataV(RP_CH_2, prev_pos, &samp_recvd, rx_sig_buff+recv_idx);
+//	    rp_AcqGetDataV(ADC_CHANNEL, prev_pos, &samp_recvd, rx_sig_buff+recv_idx);
         for (i =0; i<samp_recvd; i++){
             adc_counts = ( adc_add[(prev_pos+i)%ADC_BUFFER_SIZE] & 0x3FFF );
             adc_counts = ( (adc_counts < (1<<13)) ? adc_counts : (adc_counts - (1<<14)) );
