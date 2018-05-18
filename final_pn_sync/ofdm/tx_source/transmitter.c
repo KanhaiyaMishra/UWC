@@ -256,7 +256,7 @@ int main(int argc, char **argv){
             pos = ((pos==0)?(ADC_BUFFER_SIZE):pos);
             // write the data into the buffer upto current position(convert real wihtin (-1,1) to 14 bit DAC count (0 to 16383) )
             for(;i<pos;i++)
-                dac_add[i] = ((int32_t)(1*tx_sig_buff[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_buff[i]>0)-1)) & (MAX_COUNT-1));
+                dac_add[i] = ((int32_t)(tx_sig_buff[i]*MAX_COUNT/2 + 0.5*(2*(tx_sig_buff[i]>0)-1)) & (MAX_COUNT-1));
         }
         // enable the output for current frame
         rp_GenOutEnable(DAC_CHANNEL);

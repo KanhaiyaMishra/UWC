@@ -180,7 +180,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
     const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC;
-    const float  auto_corr_th = (N_FFT*POST_DSF/2/THRESHOLD);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0, frm_count=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
@@ -244,7 +243,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
             for( ;samp_remng > min_samp; samp_remng-=PRE_DSF) {
                 // auto correlation threshold (diff noise from pilot), corr fact threshold (reduces uncessary computation when pilot is yet present)
                 // start computing window minimum once thresholds are crossed
-                if( auto_corr > auto_corr_th && corr_fact>0.3 ){
+                if( auto_corr > THRESHOLD && corr_fact>0.3 ){
                     // remove all elements from rear having higher corr factor than current corr_fact (they will never be the window minimum in future)
                     while( !empty(&window) && window.base_ptr[window.rear].value >= corr_fact)
                         dequeueR(&window);
@@ -576,7 +575,7 @@ int main(int argc, char** argv){
 
     if(recvd_frms>0){
     // BER Evaluation Variables: RX and TX Frame numbers, loop counters, missed, valid, invalid, zero_ber frame counts, frm diff between last and latest RX frame
-    uint32_t error_count[recvd_frms], rx_frm_num, tx_frm_num = 1, i ,j, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
+    uint32_t error_count[recvd_frms], rx_frm_num, last_rx_frm=0, tx_frm_num = 1, i ,j, missd_frms=0, valid_frms=0, invalid_frms=0, frm_diff=0;
     uint8_t *tx_bin_buff = (uint8_t *)malloc(data_bits*sizeof(uint8_t));
     uint8_t *tx_bin_ptr;
     float ber = 0.0;
@@ -586,14 +585,14 @@ int main(int argc, char** argv){
     pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
     for(i=0; i<recvd_frms; i++){
         tx_bin_ptr = tx_bin_buff;
-        rx_bin_ptr = rx_bin_buff + i*bits_per_frame;
+        rx_bin_ptr = rx_bin_buff+i*bits_per_frame;
         rx_frm_num = 0;
         for(j=0; j<FRM_NUM_BITS; j++)
             rx_frm_num |= (*(rx_bin_ptr++)<<j);
 
-        frm_diff = rx_frm_num - tx_frm_num;
+        frm_diff = rx_frm_num - last_rx_frm;
 
-        if ( frm_diff <= 10 && frm_diff >= 0 ){
+        if ( frm_diff <= 10 && frm_diff >= 1 ){
 
             while(rx_frm_num >= tx_frm_num) {
                 if(rx_frm_num==tx_frm_num){
@@ -605,17 +604,16 @@ int main(int argc, char** argv){
             }
 
             valid_frms +=1;
-            missd_frms += frm_diff;
+            missd_frms += (frm_diff-1);
             ber += (double)error_count[i];
             if(error_count[i])
                 fprintf(ber_fp,"RX: Received Frame number %d with %d bit errors\n", rx_frm_num, error_count[i]);
         } else {
-            pattern_LFSR_byte(PRBS7, tx_bin_buff, data_bits);
-            tx_frm_num++;
+            fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame = %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
             missd_frms +=1;
             invalid_frms++;
-            fprintf(ber_fp,"RX: Received invalid Frame %d, Expected Frame = %d. Ignoring for BER Calculation\n", rx_frm_num, tx_frm_num);
         }
+        last_rx_frm = rx_frm_num;
     }
     ber = ber/(valid_frms*data_bits);
     fprintf(stdout,"\nRX: Calculating BER per received frame basis\n");
@@ -664,12 +662,10 @@ int main(int argc, char** argv){
     ber = ber/(i*data_bits);
     fprintf(stdout,"RX: Received total %d valid frames with BER2 = %f\n", i, ber);
     }
+    }
 
     #if DEBUG_INFO
-    uint32_t frms_save = (DEBUG_FRAMES<=recvd_frms?DEBUG_FRAMES:recvd_frms);
-//    if(ber>0.0 || missd_frms>0){
-    // Save post-processed and online received data
-        // save demodulated data
+    uint32_t frms_save = (DEBUG_FRAMES<=recvd_frms?DEBUG_FRAMES:recvd_frms), i;
     for(i = 0; i <frms_save*bits_per_frame; i++){
         fprintf(bin_fp," %d \n", rx_bin_buff[i]);
     }
@@ -682,17 +678,16 @@ int main(int argc, char** argv){
         fprintf(qam_fp," %f + %fj \t", qam_raw_buff[i].r, qam_raw_buff[i].i);
         fprintf(qam_fp," %f + %fj \n", qam_demod_buff[i].r, qam_demod_buff[i].i);
     }
-    for(i = 0; i <recv_idx; i++){
-        fprintf(sig_fp," %f \n", rx_sig_buff[i]);
-    }
-//    }
     #endif
-    }
+
 
     fclose(ber_fp);
     fclose(bin_fp);
 
     #if DEBUG_INFO
+    for(i = 0; i <recv_idx; i++){
+        fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+    }
     // close files
     fclose(qam_fp);
     fclose(sync_fp);

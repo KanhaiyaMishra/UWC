@@ -22,6 +22,9 @@ static double timediff_ms(struct timespec *begin, struct timespec *end){
     return (double)( (end->tv_sec - begin->tv_sec)*NANO + (end->tv_nsec - begin->tv_nsec) )/1000000;
 }
 
+#if DEBUG_INFO
+static complex_t qam_raw_buff[(DEBUG_FRAMES+1)*N_QAM*N_SYM] = {{0.0}};
+#endif
 FILE *trace_fp = NULL;
 int delay = 0, frm_count=0;
 
@@ -117,7 +120,9 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
     uint32_t i, j, qam_sym_r, qam_sym_i;
     real_t qam_limit = pow(2, N_BITS/2) - 1;
     real_t norm_const = sqrt(ch_attn*(2*(M_QAM - 1)/3)*N_DSC)/N_FFT;
-
+    #if DEBUG_INFO
+    static complex_t *qam_raw_ptr=qam_raw_buff;
+    #endif
     for(i=0; i<N_QAM; i++)
     {
         //extract the qam data from input buffer
@@ -138,6 +143,11 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
         qam_sym_r = gray_map[ (uint8_t)(round((temp.r+qam_limit)/2)) ];
         qam_sym_i = gray_map[ (uint8_t)(round((temp.i+qam_limit)/2)) ];
 
+        #if DEBUG_INFO
+        qam_raw_ptr->r = qam_sym_r;
+        qam_raw_ptr->i = qam_sym_i;
+        #endif
+
         //write the binary data into output buffer
         for (j=1; j<=N_BITS/2; j++){
             (*(bin_data + N_BITS/2 - j)) = (qam_sym_r>>(j-1))&0x1;
@@ -145,6 +155,11 @@ void qam_demod(uint8_t *bin_data, complex_t *qam_data){
         }
         bin_data += N_BITS;
         qam_data++;
+        #if DEBUG_INFO
+        qam_raw_ptr->r = temp.r;
+        qam_raw_ptr->i = temp.i;
+        qam_raw_ptr++;
+        #endif
     }
 }
 
@@ -158,7 +173,6 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(N_FFT, FALSE, NULL, NULL);
     // correlation length, window minimum length, auto correlation threshold to diff pilot and noise
     const int32_t corr_len = OSF*N_FFT/2/PRE_DSF, win_len = POST_DSF*N_CP_SYNC;
-    const float  auto_corr_th = (N_FFT*POST_DSF/2/THRESHOLD);
     // corr_count, sym_count, sync_correction flag, sync complettion flag, sync index with respect to base address of the signal buffer
     static int32_t corr_count = -1, sym_count = 0, sync_corrected  = 0, sync_done= 0, sync_idx=0;
     // maximum of window minimum of correlation factor, auto correlation, cross correlation, cross_correlation, auto and cross correlation at sync point
@@ -222,7 +236,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
             for( ;samp_remng > min_samp; samp_remng-=PRE_DSF) {
                 // auto correlation threshold (diff noise from pilot), corr fact threshold (reduces uncessary computation when pilot is yet present)
                 // start computing window minimum once thresholds are crossed
-                if( auto_corr > auto_corr_th && corr_fact>0.3 ){
+                if( auto_corr > THRESHOLD && corr_fact>0.4 ){
                     // remove all elements from rear having higher corr factor than current corr_fact (they will never be the window minimum in future)
                     while( !empty(&window) && window.base_ptr[window.rear].value >= corr_fact)
                         dequeueR(&window);
@@ -238,12 +252,12 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                         sync_idx = (idx1 - (win_len*PRE_DSF))%RX_BUFF_SIZE;
                         auto_corr_s = auto_corr;
                         cros_corr_s = cros_corr;
-                    }else if (window.base_ptr[window.front].value < 0.3*max_of_min){
+                    }else if (window.base_ptr[window.front].value < 0.5*max_of_min && max_of_min>0.4){
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
                         sync_done = 1; frm_count++;
                         // compute remaining samples from the sync index
                         samp_remng += ((idx1 - sync_idx)%RX_BUFF_SIZE);
-                        fprintf(stdout,"RX: Sync Established, Max of Window Min = %f, Auto Corr=%f, Cros Corr = %f, Th=%f\n",max_of_min, auto_corr_s, cros_corr_s, auto_corr_th);
+                        fprintf(stdout,"RX: Sync Established, Max of Window Min = %f, Auto Corr=%f, Cros Corr = %f, Th=%f\n",max_of_min, auto_corr_s, cros_corr_s, THRESHOLD);
                         break;
                     }
                 }
@@ -441,12 +455,14 @@ int main(int argc, char** argv){
     ber_fp = fopen(ber_file,"w+");
 
     #if DEBUG_INFO
-    FILE *sig_fp, *bin_fp;
-    char sig_file[255], bin_file[255];
-    strftime(bin_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/qam.txt",gmtime(&now));
+    FILE *sig_fp, *bin_fp, *qam_fp;
+    char sig_file[255], bin_file[255], qam_file[255];
+    strftime(qam_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/qam.txt",gmtime(&now));
     strftime(sig_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/sig.txt",gmtime(&now));
+    strftime(bin_file, 255,"./log/OFDM_%Y_%m_%d_%H_%M_%S/bin.txt",gmtime(&now));
     bin_fp = fopen(bin_file,"w+");
     sig_fp = fopen(sig_file,"w+");
+    qam_fp = fopen(qam_file,"w+");
     #endif
 
     #if TRACE_PRINT
@@ -568,30 +584,33 @@ int main(int argc, char** argv){
         for(i = 0; i <frms_save*bits_per_frame; i++){
             fprintf(bin_fp," %d \n", rx_bin_buff[i]);
         }
-        for(i = 0; i <recv_idx; i++){
-            fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+        for(i = 0; i <frms_save*N_SYM*N_QAM; i++){
+            fprintf(qam_fp," %f + %fj \n", qam_raw_buff[i].r, qam_raw_buff[i].i);
         }
-        #endif
         if(RX_BUFF_SIZE > N_FRAMES*ADC_BUFFER_SIZE){
-            float diff[ADC_BUFFER_SIZE/OSF] = {0.0}, temp = 0, var = 0, snr = 0;
-            int i=0;
-            FILE *tx_fp = fopen(QAMDATA,"r");
-            for(i=0; i<ADC_BUFFER_SIZE/OSF; i++){
-                fscanf(tx_fp,"%f",&temp);
-                diff[i] = rx_sig_buff[delay+8*i]*sqrt(40)-temp;
+            float diff[FRM_SAMP*recvd_frms], temp[FRM_SAMP], var = 0, snr = 0;
+            FILE *tx_fp = fopen(SIGDATA,"r");
+            for(int i=0; i<FRM_SAMP; i++)
+                fscanf(tx_fp,"%f", (temp+i));
+            for(int i=0; i<FRM_SAMP*recvd_frms; i++){
+                diff[i] = rx_sig_buff[delay+8*i]*sqrt(snr_const)-temp[i%FRM_SAMP];
             }
-            for(i=0; i<ADC_BUFFER_SIZE/OSF; i++)
+            for(int i=0; i<FRM_SAMP*recvd_frms; i++)
                 var += diff[i]*diff[i];
-            var = var/(ADC_BUFFER_SIZE/OSF);
+            var = var/(FRM_SAMP*recvd_frms);
             snr = 10*log10(1/var);
             fprintf(stdout,"snr = %f, noise_pwr = %g per unit signal power\n", snr, var);
             fclose(tx_fp);
         }
+        #endif
     } else
         fprintf(stdout,"Sync Could not be established\n");
 
     fclose(ber_fp);
     #if DEBUG_INFO
+    for(int i = 0; i <recv_idx; i++){
+        fprintf(sig_fp," %f \n", rx_sig_buff[i]);
+    }
     // close files
     fclose(bin_fp);
     fclose(sig_fp);

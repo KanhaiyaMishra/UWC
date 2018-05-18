@@ -6,27 +6,25 @@
 #define TRUE 1
 #define FALSE 0
 
-#define N_FRAMES 50
-#define DEBUG_FRAMES 100
+#define N_FRAMES 10000
+#define DEBUG_FRAMES 50
 
 typedef kiss_fft_cpx complex_t;
 typedef kiss_fft_scalar real_t;
 
 // Transmit Power adjustment to keep signal within +/-1V range (Without Adjustment OFDM output will vary +/-4V)
 // Amplitude after adjustment = Actual Max/sqrt(PWR_ADJ)
-#define PWR_ADJ 20.0f
-
+#define PWR_ADJ 120.0f
 // QAM16 Pilot Power = 160/20/(Channel Attenuation), QAM4 Pilot Power = 128/20/(Channel Attenuation)
 // Noise Power = (Channel Noise Level)^2*128. For Back to back channel noise level = (10^-5)
 // Based on expected attenuation from channel threshold will be set, Threshold must be less than Pilot Power
 // Auto Correlation Threshold to distinguish between pilot and noise. Actual Threshold Level = 128/THRESHOLD.
-#define THRESHOLD 64.0f
-
+#define THRESHOLD 0.000002f
 #define OSF 8               // TX over sampling factor
 #define PRE_DSF 2           // RX downsampling before synchronization
 #define POST_DSF 4          // RX downsampling after synchronization
-#define M_QAM 16            // QAM order
-#define N_BITS 4            // bits per qam symbol
+#define M_QAM 4            // QAM order
+#define N_BITS 2            // bits per qam symbol
 #define N_FFT 64            // Total Subcarriers (FFT Size)
 #define N_DSC 52            // Data Subcarriers
 #define N_QAM 26            // qam syms per ofdm symbol
@@ -48,12 +46,12 @@ typedef kiss_fft_scalar real_t;
 #define DATA_SYM_LEN 1168    // OFDM Data Symbol: (64+9)*8*2 samples
 #endif
 
-#define DAC_CHANNEL RP_CH_2
+#define DAC_CHANNEL RP_CH_1
 #define ADC_CHANNEL RP_CH_2
 #define FRM_DUR 8.5
 #define RX_DELAY 100000
 #define RUN_TIME ((N_FRAMES*FRM_DUR+40))
-#define DC_ERROR 0.015
+#define DC_ERROR 0.0147
 #define NANO 1000000000LL
 #define MAX_COUNT (1<<14)
 #define DEBUG_INFO TRUE
