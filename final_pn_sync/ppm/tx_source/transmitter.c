@@ -94,9 +94,6 @@ int main(int argc, char **argv){
     rp_GenBurstRepetitions(DAC_CHANNEL, 1);
     rp_GenBurstPeriod(DAC_CHANNEL, period);
 
-    // library function to write aribitrary data in DAC Buffer, should not be used. Takes very long time to write the data.
-//  rp_GenArbWaveform(DAC_CHANNEL, tx_sig_buff, ADC_BUFFER_SIZE);
-
     // Get start time
     clock_gettime(CLOCK_MONOTONIC, &begin);
     // start continuous transmission with single burst waveforms
@@ -119,7 +116,8 @@ int main(int argc, char **argv){
         }
         // Transmit the current frame and publish info
         rp_GenOutEnable(DAC_CHANNEL);
-        fprintf(stdout,"TX: Transmitting Frame Num = %d\n",frm_num);
+        usleep(10);
+//        fprintf(stdout,"TX: Transmitting Frame Num = %d\n",frm_num);
     }
     // wait till last frame is transmitted
     usleep(period);

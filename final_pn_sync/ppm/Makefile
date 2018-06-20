@@ -3,7 +3,7 @@ CC = gcc
 # linker
 LD = gcc
 # cleaner
-RM = rm -f
+RM = rm -rf
 
 # local directory for ".h" header files
 INCDIR = ./include
@@ -13,6 +13,7 @@ RXSRCDIR = ./rx_source
 TXSRCDIR = ./tx_source
 # local directory for ".o" output files
 OBJDIR = ./obj
+LOGDIR = ./log
 # local directory for the executable output file
 BINDIR = ./bin
 # shared library path
@@ -61,7 +62,11 @@ $(CMNOBJ): $(OBJDIR)/%.o: $(CMNSRCDIR)/%.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
 # cleaning
-.PHONY: clean
+.PHONY: clean again
 clean:
 	$(RM) $(TXOBJ) $(RXOBJ) $(CMNOBJ)
+again:
+	$(RM) $(OBJDIR)/*
+	$(RM) $(LOGDIR)/*
+	make
 ##-----------main makefile script--------------##

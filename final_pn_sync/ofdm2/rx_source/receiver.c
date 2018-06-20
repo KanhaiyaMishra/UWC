@@ -247,7 +247,7 @@ uint32_t ofdm_demod(uint8_t *bin_rx, uint32_t demod_idx, int32_t samp_remng, uin
                         sync_idx = (idx1 - (win_len*PRE_DSF))%RX_BUFF_SIZE;
                         auto_corr_s = auto_corr;
                         cros_corr_s = cros_corr;
-                    }else if (window.base_ptr[window.front].value < 0.5*max_of_min && max_of_min>0.4){
+                    }else if (window.base_ptr[window.front].value < 0.5*max_of_min){
                         // consider that maximum if the current value is less 85% of the maxima and exit sync loop
                         sync_done = 1; frm_count++;
                         // compute remaining samples from the sync index

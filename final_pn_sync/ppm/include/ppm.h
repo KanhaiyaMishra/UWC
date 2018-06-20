@@ -20,18 +20,19 @@ extern "C" {
 
 #include <inttypes.h>
 
-#define N_FRAMES 1000
-#define RX_BUFF_SIZE (16*ADC_BUFFER_SIZE)
+#define N_FRAMES 10000
+#define RX_BUFF_SIZE (64*ADC_BUFFER_SIZE)
 #define NANO 1000000000LL
 #define FRM_DUR 8.5
-#define TRACE_PRINT TRUE
+#define TRACE_PRINT FALSE
 #define DC_ERROR 0.015
+#define THRESHOLD 0.0115
 #define MAX_COUNT (1<<14)
 #define AMP_ADJ 1
 #define PPM 4
 #define OSF 8
-#define PPM_HIGH (0.9/AMP_ADJ)
-#define PPM_LOW 0.0
+#define PPM_HIGH (0.5)
+#define PPM_LOW (-0.3)
 #define N_SAMP_SYM (PPM*OSF)
 
 #if (PPM == 4)
@@ -50,7 +51,7 @@ extern "C" {
 #define FALSE 0
 #endif
 
-#define DAC_CHANNEL RP_CH_2
+#define DAC_CHANNEL RP_CH_1
 #define ADC_CHANNEL RP_CH_1
 
 #define PN_SEQ_TYPE PRBS7

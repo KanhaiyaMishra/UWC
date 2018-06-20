@@ -73,16 +73,16 @@ int main(int argc, char **argv){
     struct timespec begin, end;
     // Retreive the DAC buffer address
     static volatile int32_t* dac_add;
-    dac_add = rp_GenGetAdd(RP_CH_2);
+    dac_add = rp_GenGetAdd(DAC_CHANNEL);
 
 	fprintf(stdout,"TX: Entered, DAC Address=%p\n", dac_add);
 
     // set DAC output waveform parameters
-    rp_GenWaveform(RP_CH_2, RP_WAVEFORM_ARBITRARY);
-    rp_GenOffset(RP_CH_2, 0);
-	rp_GenAmp(RP_CH_2, 1.0);
-    rp_GenFreq(RP_CH_2, freq);
-    rp_GenMode(RP_CH_2, RP_GEN_MODE_CONTINUOUS);
+    rp_GenWaveform(DAC_CHANNEL, RP_WAVEFORM_ARBITRARY);
+    rp_GenOffset(DAC_CHANNEL, 0);
+	rp_GenAmp(DAC_CHANNEL, 1.0);
+    rp_GenFreq(DAC_CHANNEL, freq);
+    rp_GenMode(DAC_CHANNEL, RP_GEN_MODE_CONTINUOUS);
 
     // insert frame number information
     tx_bin_buff[0] = 1;
@@ -97,14 +97,14 @@ int main(int argc, char **argv){
     // Get start time
     clock_gettime(CLOCK_MONOTONIC, &begin);
     // Transmit the current frame and publish info
-    rp_GenOutEnable(RP_CH_2);
+    rp_GenOutEnable(DAC_CHANNEL);
     // start continuous transmission with single burst waveforms
     while( timediff_ms(&begin, &end) <= (N_FRAMES+1)*FRM_DUR)
         clock_gettime(CLOCK_MONOTONIC, &end);
     fprintf(stdout,"TX: Transmitted %d Frames in %lf sec\n", N_FRAMES, timediff_ms(&begin, &end)/1000);
 
     // Disable the DAC output
-	rp_GenOutDisable(RP_CH_2);
+	rp_GenOutDisable(DAC_CHANNEL);
 
     // Release Resources
     free(tx_sig_buff);
